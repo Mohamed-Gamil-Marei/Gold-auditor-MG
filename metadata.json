@@ -1,0 +1,6 @@
+{
+  "name": "مراجع الذهب - نظام التدقيق والمراجعة السريعة",
+  "description": "نظام متكامل للإدخال السريع ومراجعة حسابات محلات الذهب واكتشاف الشواذ والأخطاء المحاسبية وتسوية الخزنة والجرد اليومي.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

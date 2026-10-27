@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+dist-electron/
+release/
+GoldAuditData/
+server.js
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+

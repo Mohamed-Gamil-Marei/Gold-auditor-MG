@@ -1,0 +1,39 @@
+appId: com.goldaudit.desktop
+productName: مراجع الذهب
+copyright: Copyright © 2026 مراجع الذهب
+npmRebuild: false
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - build/icon.png
+  - build/icon.ico
+  - package.json
+  - "!node_modules{,/**/*}"
+  - "!legacy{,/**/*}"
+  - "!.env*"
+  - "!**/*.test.*"
+  - "!**/*.spec.*"
+  - "!GoldAuditData{,/**/*}"
+  - "!*.enc"
+extraMetadata:
+  main: dist-electron/main.cjs
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: مراجع الذهب
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
