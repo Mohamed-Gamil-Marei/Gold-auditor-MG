@@ -31,6 +31,7 @@ import { ensureGoldApiBridge } from '../utils/goldApiBridge';
 import { validateAndQuarantineState } from '../validation/schemas';
 import { reportAppError } from '../errors/catalog';
 import { FixItSuggestion } from '../utils/fixItEngine';
+import { randomSuffix } from '../utils/ids';
 
 export const DEFAULT_EXPENSE_CATEGORIES = [
   'كهرباء',
@@ -861,7 +862,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
         let nextLogs = state.auditLogs;
         if (wasConfirmed && oldPrice > 0 && Math.abs(oldPrice - price) > 0.5 && confirmed) {
           const logEntry: AuditLogEntry = {
-            id: `log-price-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            id: `log-price-${Date.now()}-${randomSuffix(4)}`,
             timestamp: Date.now(),
             action: 'price_edit',
             date,
@@ -1195,7 +1196,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
           },
         };
         const logEntry: AuditLogEntry = {
-          id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `log-${Date.now()}-${randomSuffix(4)}`,
           timestamp: Date.now(),
           action: lock ? 'lock' : 'unlock',
           date,
@@ -1236,7 +1237,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
       const now = Date.now();
       const newOp: Operation = {
-        id: `op-${now}-${Math.random().toString(36).slice(2, 7)}`,
+        id: `op-${now}-${randomSuffix(5)}`,
         date: opInput.date,
         kind: opInput.kind,
         karat:
@@ -1260,7 +1261,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       set((s) => {
         const wasLocked = Boolean(s.daysMap[newOp.date]?.locked);
         const logEntry: AuditLogEntry = {
-          id: `log-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `log-${now}-${randomSuffix(4)}`,
           timestamp: now,
           action: 'add',
           rowId: newOp.id,
@@ -1320,9 +1321,9 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       get().createSafetySnapshot(`استيراد جماعي (${rows.length} صف — ${sourceLabel})`);
 
       const now = Date.now();
-      const batchId = `batch-${now}-${Math.random().toString(36).slice(2, 6)}`;
+      const batchId = `batch-${now}-${randomSuffix(4)}`;
       const createdOps: Operation[] = rows.map((r, i) => ({
-        id: `op-batch-${now}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `op-batch-${now}-${i}-${randomSuffix(4)}`,
         date: r.date,
         kind: r.kind,
         karat: r.karat || (r.kind === 'buy' || r.kind === 'sell' ? 21 : undefined),
@@ -1377,7 +1378,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
         const primaryDate = uniqueDates[0] || s.currentDate;
         const batchLog: AuditLogEntry = {
-          id: `log-batch-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `log-batch-${now}-${randomSuffix(4)}`,
           timestamp: now,
           action: 'import_batch',
           date: primaryDate,
@@ -1484,7 +1485,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
         if (isMaterialChange) {
           const logEntry: AuditLogEntry = {
-            id: `log-${now}-${Math.random().toString(36).slice(2, 6)}`,
+            id: `log-${now}-${randomSuffix(4)}`,
             timestamp: now,
             action: 'edit',
             rowId: id,
@@ -1499,7 +1500,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
           nextLogs = [logEntry, ...nextLogs];
         } else if (isReviewOrNoteChange) {
           const reviewLog: AuditLogEntry = {
-            id: `log-rev-${now}-${Math.random().toString(36).slice(2, 6)}`,
+            id: `log-rev-${now}-${randomSuffix(4)}`,
             timestamp: now,
             action: 'review_note',
             rowId: id,
@@ -1536,7 +1537,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
       const now = Date.now();
       const trashEntry: DeletedOperationEntry = {
-        id: `trash-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `trash-${now}-${randomSuffix(4)}`,
         operation: existing,
         deletedAt: now,
         reason: reason || 'حذف',
@@ -1547,7 +1548,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
         const nextTrash = [trashEntry, ...s.deletedOperations];
         const wasLocked = Boolean(s.daysMap[existing.date]?.locked);
         const logEntry: AuditLogEntry = {
-          id: `log-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `log-${now}-${randomSuffix(4)}`,
           timestamp: now,
           action: 'delete',
           rowId: id,
@@ -1589,7 +1590,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
         const now = Date.now();
         const logEntry: AuditLogEntry = {
-          id: `log-undodel-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `log-undodel-${now}-${randomSuffix(4)}`,
           timestamp: now,
           action: 'undo_delete',
           rowId: restored.id,
@@ -1714,7 +1715,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       set((s) => {
         const nextOps = s.operations.filter((o) => o.id !== s.lastAddedOpId);
         const logEntry: AuditLogEntry = {
-          id: `log-undoadd-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `log-undoadd-${now}-${randomSuffix(4)}`,
           timestamp: now,
           action: 'undo_add',
           rowId: exists.id,
@@ -1753,7 +1754,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
     addPerson: (pInput) => {
       const newPerson: Person = {
-        id: `person-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `person-${Date.now()}-${randomSuffix(4)}`,
         name: pInput.name.trim(),
         type: pInput.type,
         phone: pInput.phone || '',
@@ -1786,7 +1787,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
     addPersonFollowUp: (personId, followUpInput) => {
       const now = Date.now();
       const newEntry: PersonFollowUp = {
-        id: `fu-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `fu-${now}-${randomSuffix(4)}`,
         date: followUpInput.date || getTodayIso(),
         note: followUpInput.note.trim(),
         promisedDate: followUpInput.promisedDate,
@@ -1894,7 +1895,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
     addWorker: (wInput) => {
       const newWorker: Worker = {
-        id: `worker-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `worker-${Date.now()}-${randomSuffix(4)}`,
         name: wInput.name.trim(),
         monthlySalary: wInput.monthlySalary,
         dueDay: wInput.dueDay || 30,
@@ -2504,7 +2505,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       const s = get();
       const now = Date.now();
       const snap: SafetySnapshot = {
-        id: `snap-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `snap-${now}-${randomSuffix(4)}`,
         label,
         createdAt: now,
         expiresAt: now + 10 * 60 * 1000, // 10 minutes
@@ -2630,7 +2631,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
         if (ok) {
           set((state) => {
             const logEntry: AuditLogEntry = {
-              id: `log-fixit-${now}-${Math.random().toString(36).slice(2, 6)}`,
+              id: `log-fixit-${now}-${randomSuffix(4)}`,
               timestamp: now,
               action: 'fix_it',
               rowId: suggestion.operationId,
@@ -2669,7 +2670,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       const now = Date.now();
       set((s) => {
         const logEntry: AuditLogEntry = {
-          id: `log-${isPrint ? 'print' : 'export'}-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `log-${isPrint ? 'print' : 'export'}-${now}-${randomSuffix(4)}`,
           timestamp: now,
           action: isPrint ? 'print' : 'export',
           date: s.currentDate,
@@ -2691,7 +2692,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       const now = Date.now();
       set((s) => {
         const newPreset: SavedFilterPreset = {
-          id: `fpreset-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `fpreset-${now}-${randomSuffix(4)}`,
           name: trimmed,
           screenId,
           filter: JSON.parse(JSON.stringify(filter)),
@@ -2718,7 +2719,7 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       const now = Date.now();
       const newTemplate: ImportMappingTemplate = {
         ...templateInput,
-        id: `imptpl-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `imptpl-${now}-${randomSuffix(4)}`,
         createdAt: now,
       };
       set((s) => {

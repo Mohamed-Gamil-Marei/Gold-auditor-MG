@@ -1,5 +1,6 @@
 import { DiagnosticErrorLog } from '../types';
 import { getTodayIso } from '../utils/numerals';
+import { randomSuffix } from '../utils/ids';
 
 export type ErrorCode =
   | 'E-STORE-001'
@@ -280,7 +281,7 @@ export function reportAppError(params: {
     : undefined;
 
   const entry: DiagnosticErrorLog = {
-    id: `err-${now}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `err-${now}-${randomSuffix(4)}`,
     timestamp: now,
     date: getTodayIso(),
     screen: params.screen || 'عام',

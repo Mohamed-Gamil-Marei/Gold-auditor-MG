@@ -1,6 +1,7 @@
 import { DayInfo } from '../../types';
 import { getEffectiveKaratPrice } from '../../utils/numerals';
 import { NormalizedImportRow } from './normalizeRow';
+import { randomSuffix } from '../../utils/ids';
 
 export type ImportRowHealth = 'ok' | 'warn' | 'error';
 
@@ -92,7 +93,7 @@ export function validateNormalizedRows(
 
     return {
       ...row,
-      id: `imp-row-${idx}-${Math.random().toString(36).slice(2, 7)}`,
+      id: `imp-row-${idx}-${randomSuffix(5)}`,
       selected: (health as ImportRowHealth) !== 'error',
       health: health as ImportRowHealth,
       issues,

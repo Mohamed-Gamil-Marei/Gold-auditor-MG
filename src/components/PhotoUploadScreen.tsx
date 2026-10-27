@@ -28,6 +28,7 @@ import {
 } from '../utils/numerals';
 import { ensureGoldApiBridge } from '../utils/goldApiBridge';
 import { UniversalImportPanel } from './UniversalImportPanel';
+import { randomSuffix } from '../utils/ids';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   typeof window !== 'undefined'
@@ -417,9 +418,7 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                 job.forcedSide || (r.type === 'buy' ? 'buy' : 'sell');
 
               rawReadRows.push({
-                id: `ocr-${Date.now()}-${rawReadRows.length}-${Math.random()
-                  .toString(36)
-                  .slice(2, 5)}`,
+                id: `ocr-${Date.now()}-${rawReadRows.length}-${randomSuffix(3)}`,
                 approved: true,
                 type: rowType,
                 item: r.item || '',

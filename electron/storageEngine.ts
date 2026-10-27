@@ -155,6 +155,7 @@ export class GoldStorageEngine {
   public readonly stateFilePath: string;
   public readonly securityFilePath: string;
   private lastDailyBackupDate: string | null = null;
+  private lastSavedAt = 0;
   private failedAttempts = 0;
   private lockedUntil = 0;
 
@@ -309,32 +310,25 @@ export class GoldStorageEngine {
       let recoverySource = '';
 
       if (!loaded) {
-        // state.json is missing or corrupted — try .bak first, then newest backup in backups/
-        loaded = tryParseFile(bakPath);
-        if (loaded) {
+        // state.json مفقود أو تالف: اختر الأحدث بين state.json.bak وكل النسخ في backups/
+        // (الأحدث حسب updatedAt داخل الملف، وإلا حسب وقت التعديل) لأن .bak يحمل الحفظة السابقة فقط.
+        const candidates: { source: string; data: any; stamp: number }[] = [];
+        const addCandidate = (source: string, full: string) => {
+          const data = tryParseFile(full);
+          if (!data) return;
+          const mtime = fs.statSync(full).mtimeMs;
+          const stamp = typeof data.updatedAt === 'number' ? data.updatedAt : mtime;
+          candidates.push({ source, data, stamp });
+        };
+        addCandidate('state.json.bak', bakPath);
+        for (const f of fs.readdirSync(this.backupsDir)) {
+          if (f.endsWith('.json')) addCandidate(f, path.join(this.backupsDir, f));
+        }
+        candidates.sort((x, y) => y.stamp - x.stamp);
+        if (candidates.length > 0) {
+          loaded = candidates[0].data;
           recoveredFromBackup = true;
-          recoverySource = 'state.json.bak';
-        } else {
-          // Try newest valid backup in backups/
-          const backupFiles = fs
-            .readdirSync(this.backupsDir)
-            .filter((f) => f.endsWith('.json'))
-            .map((f) => ({
-              name: f,
-              full: path.join(this.backupsDir, f),
-              mtime: fs.statSync(path.join(this.backupsDir, f)).mtimeMs,
-            }))
-            .sort((a, b) => b.mtime - a.mtime);
-
-          for (const bf of backupFiles) {
-            const candidate = tryParseFile(bf.full);
-            if (candidate) {
-              loaded = candidate;
-              recoveredFromBackup = true;
-              recoverySource = bf.name;
-              break;
-            }
-          }
+          recoverySource = candidates[0].source;
         }
 
         if (loaded && recoveredFromBackup) {
@@ -406,11 +400,14 @@ export class GoldStorageEngine {
         }
       }
 
+      const now = Math.max(Date.now(), this.lastSavedAt + 1);
+      this.lastSavedAt = now;
+
       const payload = {
         ...state,
         daysMap: cleanedDaysMap,
         schemaVersion: CURRENT_SCHEMA_VERSION,
-        updatedAt: Date.now(),
+        updatedAt: now,
       };
 
       writeJsonAtomically(this.stateFilePath, payload, true);

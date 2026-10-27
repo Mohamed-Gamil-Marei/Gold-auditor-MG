@@ -102,15 +102,43 @@ declare global {
 const IDB_FALLBACK_STATE_KEY = 'gold_audit_v3_state';
 const IDB_FALLBACK_IMAGES_KEY = 'gold_audit_v3_images';
 
-async function safeFetchJson(url: string, options?: RequestInit): Promise<any> {
+const PASSCODE_STORAGE_KEY = 'gold_app_passcode';
+
+function getStoredPasscode(): string {
   try {
+    return sessionStorage.getItem(PASSCODE_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+async function safeFetchJson(url: string, options?: RequestInit, retried = false): Promise<any> {
+  try {
+    const stored = getStoredPasscode();
     const res = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...(stored ? { 'x-app-passcode': stored } : {}),
         ...(options?.headers || {}),
       },
     });
+
+    // الخادم يطلب APP_PASSCODE: اسأل المستخدم مرة واحدة ثم أعد المحاولة
+    if (res.status === 401 && !retried && typeof window !== 'undefined' && typeof window.prompt === 'function') {
+      const body = await res.clone().json().catch(() => null);
+      if (body?.requirePasscode) {
+        const entered = window.prompt('أدخل رمز الحماية (APP_PASSCODE):');
+        if (entered && entered.trim()) {
+          try {
+            sessionStorage.setItem(PASSCODE_STORAGE_KEY, entered.trim());
+          } catch {
+            // ignore
+          }
+          return safeFetchJson(url, options, true);
+        }
+      }
+    }
     return await res.json();
   } catch (err: any) {
     return { ok: false, error: err?.message || 'تعذر الاتصال بالعملية الرئيسية' };

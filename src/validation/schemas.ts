@@ -8,6 +8,7 @@ import {
   QuarantinedRecord,
   Worker,
 } from '../types';
+import { randomSuffix } from '../utils/ids';
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -166,7 +167,7 @@ export function validateAndQuarantineState(rawState: any): {
       } else {
         const firstIssue = parsed.error.issues[0];
         quarantined.push({
-          id: `quar-op-${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `quar-op-${now}-${idx}-${randomSuffix(4)}`,
           entityType: 'operation',
           rawData: rawOp,
           reason: firstIssue

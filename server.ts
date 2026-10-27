@@ -1,3 +1,4 @@
+import { evaluateDesktopAccess, resolveListenHost } from './serverConfig';
 import dotenv from 'dotenv';
 import express from 'express';
 import path from 'path';
@@ -43,24 +44,24 @@ async function startServer() {
 
   app.use(express.json({ limit: '15mb' }));
 
-  // Passcode protection middleware for /api/desktop/* when APP_PASSCODE is configured
-  const checkDesktopPasscode = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const requiredPasscode = (process.env.APP_PASSCODE || '').trim();
-    if (requiredPasscode) {
-      const provided = String(req.headers['x-app-passcode'] || '').trim();
-      if (provided !== requiredPasscode) {
-        res.status(401).json({
-          ok: false,
-          error: 'رمز الحماية (APP_PASSCODE) مطلوب أو غير صحيح.',
-          requirePasscode: true,
-        });
-        return;
-      }
+  // حماية /api/desktop/*: fail-closed عند الربط على الشبكة بدون APP_PASSCODE
+  const listenHost = resolveListenHost();
+  app.use('/api/desktop', (req, res, next) => {
+    const decision = evaluateDesktopAccess(
+      listenHost,
+      process.env.APP_PASSCODE || '',
+      String(req.headers['x-app-passcode'] || '')
+    );
+    if (decision.allowed) {
+      next();
+      return;
     }
-    next();
-  };
-
-  app.use('/api/desktop', checkDesktopPasscode);
+    res.status(decision.status).json({
+      ok: false,
+      error: decision.error,
+      requirePasscode: decision.requirePasscode,
+    });
+  });
 
   // --- Desktop Bridge Endpoints (/api/desktop/*) ---
   app.get('/api/desktop/storage/load', (_req, res) => {
@@ -213,9 +214,8 @@ async function startServer() {
     });
   }
 
-  const host = process.env.HOST || '0.0.0.0';
-  app.listen(PORT, host, () => {
-    console.log(`Gold Audit Server running on http://localhost:${PORT}`);
+  app.listen(PORT, listenHost, () => {
+    console.log(`Gold Audit Server running on http://${listenHost}:${PORT}`);
   });
 }
 
