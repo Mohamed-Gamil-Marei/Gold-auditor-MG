@@ -110,6 +110,14 @@ async function startServer() {
     res.json(storageEngine.checkImagesExist(req.body?.dates || []));
   });
 
+  app.get('/api/desktop/storage/images-info', (_req, res) => {
+    res.json(storageEngine.getImagesStorageInfo());
+  });
+
+  app.post('/api/desktop/storage/cleanup-images', (req, res) => {
+    res.json(storageEngine.cleanupImagesForDates(req.body?.dates || []));
+  });
+
   app.post('/api/desktop/storage/migrate', (req, res) => {
     try {
       const { migrated, wasMigrated } = migrateState(req.body?.state);
@@ -183,6 +191,16 @@ async function startServer() {
 
   app.post('/api/desktop/ocr/read-ledger', checkAiProtection, async (req, res) => {
     const result = await geminiService.readLedger(req.body || {});
+    res.json(result);
+  });
+
+  app.post('/api/desktop/ocr/detect-orientation', checkAiProtection, async (req, res) => {
+    const result = await geminiService.detectPageOrientationAndRegions(req.body || {});
+    res.json(result);
+  });
+
+  app.post('/api/desktop/ocr/verify-weak-cells', checkAiProtection, async (req, res) => {
+    const result = await geminiService.verifyWeakCells(req.body || {});
     res.json(result);
   });
 

@@ -17,6 +17,9 @@ files:
   - "!**/*.test.*"
   - "!**/*.spec.*"
   - "!GoldAuditData{,/**/*}"
+  - "!public/assets/aistudio{,/**/*}"
+  - "!dist/assets/aistudio{,/**/*}"
+  - "!**/*.md"
   - "!*.enc"
 extraMetadata:
   main: dist-electron/main.cjs

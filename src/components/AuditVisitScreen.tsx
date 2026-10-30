@@ -193,6 +193,19 @@ export const AuditVisitScreen: React.FC<Props> = ({ onNavigateTab, onShowToast }
       }
     }
 
+    // H3.7 & H5.6: Aggregate handwritten ledger totals differences and red marks count across visit dates
+    let ledgerTotalsNetSellDiff = 0;
+    let ledgerTotalsNetBuyDiff = 0;
+    for (const d of sortedDates) {
+      const comp = daysMap[d]?.ledgerTotalsComparison;
+      if (comp?.sell) ledgerTotalsNetSellDiff += comp.sell.diffAmount || 0;
+      if (comp?.buy) ledgerTotalsNetBuyDiff += comp.buy.diffAmount || 0;
+    }
+    const redMarksCount = periodOps.reduce(
+      (sum, op) => sum + (op.bookMarks ? op.bookMarks.length : 0),
+      0
+    );
+
     const debtSummary = computePersonBalancesSummary(operations, persons, toDate);
     const exceededDebtCount = Array.from(debtSummary.map.values()).filter(
       (p) => p.exceededAnyLimit
@@ -220,6 +233,9 @@ export const AuditVisitScreen: React.FC<Props> = ({ onNavigateTab, onShowToast }
       advancesTotal,
       netSafeDiff,
       netGoldDiff21EqG,
+      ledgerTotalsNetSellDiff,
+      ledgerTotalsNetBuyDiff,
+      redMarksCount,
       debtSummary,
       exceededDebtCount,
       sortedDates,
@@ -258,6 +274,9 @@ export const AuditVisitScreen: React.FC<Props> = ({ onNavigateTab, onShowToast }
       unreviewedHighCount: visitMetrics.unreviewedHighIssues.length,
       sellAnomaliesImpact: 0,
       buyAnomaliesImpact: 0,
+      ledgerTotalsNetSellDiff: visitMetrics.ledgerTotalsNetSellDiff,
+      ledgerTotalsNetBuyDiff: visitMetrics.ledgerTotalsNetBuyDiff,
+      redMarksCount: visitMetrics.redMarksCount,
     };
 
     await completeAuditVisit(activeVisit.id, summarySnapshot, true);
@@ -880,6 +899,40 @@ export const AuditVisitScreen: React.FC<Props> = ({ onNavigateTab, onShowToast }
                     }`}
                   >
                     {formatWeight(visitMetrics.netGoldDiff21EqG)} جرام
+                  </div>
+                </div>
+              </div>
+
+              {/* H3.7 & H5.6: Handwritten Ledger Totals Diffs & Red Ink Marks Summary */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs mt-2.5">
+                <div className="border border-slate-200 rounded p-2.5 bg-slate-50">
+                  <div className="text-slate-500">فروق إجمالي مبيعات الدفتر المكتوب (H3)</div>
+                  <div
+                    className={`font-mono font-bold text-sm mt-0.5 ${
+                      Math.abs(visitMetrics.ledgerTotalsNetSellDiff) > 1
+                        ? 'text-red-700'
+                        : 'text-emerald-700'
+                    }`}
+                  >
+                    {formatNumber(visitMetrics.ledgerTotalsNetSellDiff)} ج.م
+                  </div>
+                </div>
+                <div className="border border-slate-200 rounded p-2.5 bg-slate-50">
+                  <div className="text-slate-500">فروق إجمالي مشتريات الدفتر المكتوب (H3)</div>
+                  <div
+                    className={`font-mono font-bold text-sm mt-0.5 ${
+                      Math.abs(visitMetrics.ledgerTotalsNetBuyDiff) > 1
+                        ? 'text-red-700'
+                        : 'text-emerald-700'
+                    }`}
+                  >
+                    {formatNumber(visitMetrics.ledgerTotalsNetBuyDiff)} ج.م
+                  </div>
+                </div>
+                <div className="border border-slate-200 rounded p-2.5 bg-slate-50">
+                  <div className="text-slate-500">علامات القلم الأحمر في الدفتر (H5)</div>
+                  <div className="font-mono font-bold text-sm text-rose-700 mt-0.5">
+                    {visitMetrics.redMarksCount} علامة مرصودة
                   </div>
                 </div>
               </div>

@@ -29,6 +29,13 @@ export const OperationSchema = z.object({
   note: z.string().default(''),
   importBatchId: z.string().optional(),
   sourceType: z.string().optional(),
+  runningBalanceBefore: z.number().finite().optional(),
+  runningBalanceAfter: z.number().finite().optional(),
+  pageNumberHint: z.union([z.string(), z.number()]).optional(),
+  rowOrderInPage: z.number().finite().optional(),
+  ocrConfidence: z.number().finite().optional(),
+  bookMarks: z.array(z.any()).optional(),
+  sourcePageRef: z.any().optional(),
   createdAt: z.number().finite().optional().default(() => Date.now()),
   updatedAt: z.number().finite().optional().default(() => Date.now()),
 });
@@ -85,6 +92,10 @@ export const DayInfoSchema = z.object({
   unlockReason: z.string().optional(),
   ledgerImageDataUrl: z.string().optional(),
   ledgerImageFile: z.string().optional(),
+  openingLedgerBalance: z.number().finite().optional(),
+  closingLedgerBalance: z.number().finite().optional(),
+  ledgerTotalsComparison: z.any().optional(),
+  ledgerPages: z.array(z.any()).optional(),
   checklist: z.any().optional(),
 });
 

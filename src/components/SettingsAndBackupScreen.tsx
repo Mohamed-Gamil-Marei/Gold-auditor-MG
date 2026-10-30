@@ -80,7 +80,16 @@ export const SettingsAndBackupScreen: React.FC = () => {
     restoreFromRecycleBin,
     emptyRecycleBinPermanently,
     mergeDuplicatePersons,
+    convertRedCirclesToReviewedFlag,
   } = useAuditStore();
+
+  // P5: Ledger Image Storage Usage state
+  const [imagesStorageInfo, setImagesStorageInfo] = useState<{
+    count: number;
+    totalBytes: number;
+  }>({ count: 0, totalBytes: 0 });
+  const [cleanupOlderThanDays, setCleanupOlderThanDays] = useState<number>(30);
+  const [ledgerSettingsToast, setLedgerSettingsToast] = useState<string | null>(null);
 
   // F7.1: Recycle Bin confirmation state
   const [confirmEmptyRecycleBin, setConfirmEmptyRecycleBin] = useState(false);
@@ -283,6 +292,15 @@ export const SettingsAndBackupScreen: React.FC = () => {
     if (lockStat.ok) {
       setAppLockEnabled(lockStat.enabled);
       setAppLockIdleMins(lockStat.idleMinutes || 15);
+    }
+    if (api.storage.getImagesStorageInfo) {
+      const imgInfo = await api.storage.getImagesStorageInfo();
+      if (imgInfo.ok) {
+        setImagesStorageInfo({
+          count: imgInfo.count,
+          totalBytes: imgInfo.totalBytes,
+        });
+      }
     }
   };
 
@@ -2549,6 +2567,138 @@ export const SettingsAndBackupScreen: React.FC = () => {
               ))}
           </div>
         )}
+      </div>
+
+      {/* Part 4 (H3, H4, H5, P5): Scanned Ledger & Image Storage Management */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">
+              إعدادات قراءة الدفتر المصوّر وإدارة مساحة صور الصفحات (H3 · H4 · H5 · P5)
+            </h3>
+            <p className="text-xs text-slate-500">
+              التحكم في حدود مطابقة إجماليات الدفتر، فحص الجمع التراكمي، علامات القلم الأحمر، وتنظيف صور الدفتر القديمة.
+            </p>
+          </div>
+        </div>
+
+        {ledgerSettingsToast && (
+          <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg text-xs font-bold">
+            {ledgerSettingsToast}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+            <label className="block font-bold text-slate-800">
+              حد الفرق الصغير مع إجمالي الدفتر (H3) (ج.م):
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={settings.ledgerTotalSmallDiffAmount || 50}
+              onChange={(e) =>
+                updateSettings({
+                  ledgerTotalSmallDiffAmount: Math.max(1, Number(e.target.value) || 50),
+                })
+              }
+              className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded font-mono font-bold"
+            />
+            <label className="flex items-center gap-2 pt-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.blockImportOnUnapprovedLargeDiff)}
+                onChange={(e) =>
+                  updateSettings({ blockImportOnUnapprovedLargeDiff: e.target.checked })
+                }
+                className="rounded text-amber-600"
+              />
+              <span>منع إضافة اليوم إذا كان به فرق كبير غير معتمد من المراجع</span>
+            </label>
+          </div>
+
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+            <label className="block font-bold text-slate-800">
+              علامات القلم الأحمر والقاموس الذكي (H5 · P3):
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.enableSelfLearningDictionary)}
+                onChange={(e) =>
+                  updateSettings({ enableSelfLearningDictionary: e.target.checked })
+                }
+                className="rounded text-amber-600"
+              />
+              <span>تفعيل التعلم التلقائي من تصحيحات المراجع (P3)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                const count = convertRedCirclesToReviewedFlag();
+                setLedgerSettingsToast(
+                  `تم تحويل علامة الدائرة الحمراء إلى علامة مراجعة لعدد ${count} عملية بنجاح ✓`
+                );
+              }}
+              className="w-full py-1.5 px-3 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-900 rounded-lg font-bold"
+            >
+              ⭕ حوّل علامة الدائرة الحمراء إلى علامة مراجعة (H5.5)
+            </button>
+          </div>
+
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+            <div className="flex items-center justify-between font-bold text-slate-800">
+              <span>مساحة صور صفحات الدفتر المحفوظة (P5):</span>
+              <span className="font-mono text-amber-800">
+                {imagesStorageInfo.count} صورة (
+                {(imagesStorageInfo.totalBytes / (1024 * 1024)).toFixed(2)} MB)
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600">الأيام المقفولة الأقدم من:</span>
+              <input
+                type="number"
+                min={7}
+                max={365}
+                value={cleanupOlderThanDays}
+                onChange={(e) => setCleanupOlderThanDays(Math.max(7, Number(e.target.value) || 30))}
+                className="w-16 px-2 py-1 bg-white border border-slate-300 rounded font-mono"
+              />
+              <span className="text-slate-600">يوم</span>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const cutoffMs = Date.now() - cleanupOlderThanDays * 86400000;
+                const cutoffIso = new Date(cutoffMs).toISOString().slice(0, 10);
+                const oldLockedDates = Object.values(daysMap)
+                  .filter((d) => d.locked && d.date <= cutoffIso)
+                  .map((d) => d.date);
+                const api = ensureGoldApiBridge();
+                if (api.storage.cleanupImagesForDates && oldLockedDates.length > 0) {
+                  const res = await api.storage.cleanupImagesForDates(oldLockedDates);
+                  if (res.ok) {
+                    setLedgerSettingsToast(
+                      `تم تنظيف ${res.deletedCount} صورة للأيام المقفولة القديمة وتوفير ${(
+                        res.freedBytes /
+                        (1024 * 1024)
+                      ).toFixed(2)} MB ✓`
+                    );
+                    refreshDesktopStatuses();
+                  }
+                } else {
+                  setLedgerSettingsToast(
+                    'لا توجد أيام مقفولة أقدم من المدة المحددة تحتوي على صور لحذفها.'
+                  );
+                }
+              }}
+              className="w-full py-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold"
+            >
+              تنظيف صور الأيام المقفولة القديمة (مع الاحتفاظ بالعمليات)
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Confirmation Modal for Emptying Recycle Bin Permanently */}

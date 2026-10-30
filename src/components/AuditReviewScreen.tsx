@@ -21,12 +21,15 @@ import {
   ShieldAlert,
   Ban,
   FileDown,
+  BookOpen,
 } from 'lucide-react';
 import { useAuditStore } from '../store/useAuditStore';
 import { runAllAuditChecks } from '../utils/checks';
 import { formatNumber, formatWeight } from '../utils/numerals';
 import { exportFullWorkbookExcel } from '../utils/exportImport';
 import { ensureGoldApiBridge } from '../utils/goldApiBridge';
+import { LedgerPageViewerModal } from './common/LedgerPageViewerModal';
+import { Operation } from '../types';
 
 export const AuditReviewScreen: React.FC = () => {
   const {
@@ -55,6 +58,10 @@ export const AuditReviewScreen: React.FC = () => {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSummaryText, setAiSummaryText] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+
+  // P5: Ledger Page Viewer state
+  const [viewerDate, setViewerDate] = useState<string | null>(null);
+  const [viewerHighlightOp, setViewerHighlightOp] = useState<Operation | null>(null);
 
   // Run all checks in a memoized block (Patch 3)
   const auditResult = useMemo(
@@ -557,6 +564,51 @@ export const AuditReviewScreen: React.FC = () => {
             <span>غير المراجَع فقط</span>
           </label>
         </div>
+
+        {/* H4.6 Quick Filter for Paper Ledger Arithmetic & Totals Errors */}
+        <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-100 text-xs">
+          <button
+            type="button"
+            onClick={() =>
+              setCheckTypeFilter((prev) =>
+                prev === 'ledger_arithmetic' ? 'all' : 'ledger_arithmetic'
+              )
+            }
+            className={`px-3 py-1.5 rounded-lg font-bold transition ${
+              checkTypeFilter === 'ledger_arithmetic'
+                ? 'bg-amber-600 text-white'
+                : 'bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100'
+            }`}
+          >
+            تقرير أخطاء الجمع التراكمي في الدفتر (H4) ({auditResult.countsByCheck['ledger_arithmetic']?.count || 0})
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              setCheckTypeFilter((prev) =>
+                prev === 'ledger_totals_mismatch' ? 'all' : 'ledger_totals_mismatch'
+              )
+            }
+            className={`px-3 py-1.5 rounded-lg font-bold transition ${
+              checkTypeFilter === 'ledger_totals_mismatch'
+                ? 'bg-rose-600 text-white'
+                : 'bg-rose-50 text-rose-900 border border-rose-200 hover:bg-rose-100'
+            }`}
+          >
+            فروق إجمالي الدفتر المكتوب بخط اليد (H3) ({auditResult.countsByCheck['ledger_totals_mismatch']?.count || 0})
+          </button>
+
+          {checkTypeFilter !== 'all' && (
+            <button
+              type="button"
+              onClick={() => setCheckTypeFilter('all')}
+              className="px-2.5 py-1.5 text-slate-600 hover:underline font-bold"
+            >
+              إلغاء فلتر الفحص
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Issues Table */}
@@ -676,15 +728,31 @@ export const AuditReviewScreen: React.FC = () => {
                           >
                             {rev.reviewed ? 'تم المراجعة ✓' : 'تم المراجعة'}
                           </button>
-                          {iss.date && iss.date !== '-' && (
-                            <button
-                              type="button"
-                              onClick={() => ignoreDateException(iss.date)}
-                              title={`استثناء تاريخ ${iss.date} من الفحوصات`}
-                              className="p-1 text-slate-400 hover:text-slate-700"
-                            >
-                              <Ban className="w-3.5 h-3.5" />
-                            </button>
+                           {iss.date && iss.date !== '-' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const op = iss.rowId
+                                    ? operations.find((o) => o.id === iss.rowId) || null
+                                    : null;
+                                  setViewerHighlightOp(op);
+                                  setViewerDate(iss.date);
+                                }}
+                                title="اعرض صفحة الدفتر الأصلية (P5)"
+                                className="p-1 text-amber-600 hover:text-amber-800"
+                              >
+                                <BookOpen className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => ignoreDateException(iss.date)}
+                                title={`استثناء تاريخ ${iss.date} من الفحوصات`}
+                                className="p-1 text-slate-400 hover:text-slate-700"
+                              >
+                                <Ban className="w-3.5 h-3.5" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -726,6 +794,20 @@ export const AuditReviewScreen: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* P5 Ledger Page Viewer Modal */}
+      {viewerDate && (
+        <LedgerPageViewerModal
+          isOpen={Boolean(viewerDate)}
+          onClose={() => {
+            setViewerDate(null);
+            setViewerHighlightOp(null);
+          }}
+          date={viewerDate}
+          dayInfo={daysMap[viewerDate]}
+          highlightOperation={viewerHighlightOp}
+        />
       )}
     </div>
   );

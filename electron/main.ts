@@ -195,6 +195,14 @@ function registerIpcHandlers() {
     return storageEngine.checkImagesExist(dates);
   });
 
+  ipcMain.handle('storage:getImagesStorageInfo', async () => {
+    return storageEngine.getImagesStorageInfo();
+  });
+
+  ipcMain.handle('storage:cleanupImagesForDates', async (_event, dates: string[]) => {
+    return storageEngine.cleanupImagesForDates(dates);
+  });
+
   ipcMain.handle('storage:exportJson', async (_event, payload: any) => {
     if (!mainWindow) return { ok: false, error: 'النافذة غير متاحة.' };
     const stamp = new Date().toISOString().slice(0, 10);
@@ -237,6 +245,14 @@ function registerIpcHandlers() {
   // --- Gemini OCR & Summarize IPC ---
   ipcMain.handle('ocr:readLedger', async (_event, params) => {
     return geminiService.readLedger(params);
+  });
+
+  ipcMain.handle('ocr:detectOrientation', async (_event, params) => {
+    return geminiService.detectPageOrientationAndRegions(params);
+  });
+
+  ipcMain.handle('ocr:verifyWeakCells', async (_event, params) => {
+    return geminiService.verifyWeakCells(params);
   });
 
   ipcMain.handle('ai:summarize', async (_event, params) => {

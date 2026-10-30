@@ -24,6 +24,7 @@ import { checkRoundAndRepeatedNumbers } from './checkRoundAndRepeatedNumbers';
 import { checkSellBelowBuyCost } from './checkSellBelowBuyCost';
 import { checkStatisticalOutliers } from './checkStatisticalOutliers';
 import { checkWorkerAdvances } from './checkWorkerAdvances';
+import { checkLedgerArithmetic } from './checkLedgerArithmetic';
 
 export interface AuditRunResult {
   issues: Issue[];
@@ -115,6 +116,10 @@ export function runAllAuditChecks(
     {
       name: 'سجل التعديلات والأيام المقفولة',
       fn: () => checkAuditLogAnomalies(auditLogs, daysMap),
+    },
+    {
+      name: 'حسابات الدفتر ومطابقة الإجماليات المكتوبة',
+      fn: () => checkLedgerArithmetic(filteredOps, daysMap, settings),
     },
   ];
 

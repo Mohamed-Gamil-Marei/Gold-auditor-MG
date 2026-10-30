@@ -33,7 +33,7 @@ export function sanitizeSafeFilename(name: string): string {
 
 export function sanitizeDateKey(date: string): string {
   const cleaned = String(date || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+  if (!/^\d{4}-\d{2}-\d{2}(?:__p\d+)?$/.test(cleaned)) {
     throw new Error('صيغة التاريخ غير صالحة لحفظ الصورة.');
   }
   return cleaned;
@@ -598,6 +598,67 @@ export class GoldStorageEngine {
       }
     }
     return { ok: true, missingDates };
+  }
+
+  public getImagesStorageInfo(): {
+    ok: boolean;
+    count: number;
+    totalBytes: number;
+    files: { key: string; date: string; sizeBytes: number }[];
+  } {
+    try {
+      if (!fs.existsSync(this.imagesDir)) {
+        return { ok: true, count: 0, totalBytes: 0, files: [] };
+      }
+      const entries = fs
+        .readdirSync(this.imagesDir)
+        .filter((f) => f.endsWith('.jpg'))
+        .map((f) => {
+          const full = path.join(this.imagesDir, f);
+          const stat = fs.statSync(full);
+          const key = f.replace(/\.jpg$/i, '');
+          const date = key.slice(0, 10);
+          return { key, date, sizeBytes: stat.size };
+        });
+      const totalBytes = entries.reduce((s, e) => s + e.sizeBytes, 0);
+      return { ok: true, count: entries.length, totalBytes, files: entries };
+    } catch {
+      return { ok: true, count: 0, totalBytes: 0, files: [] };
+    }
+  }
+
+  public cleanupImagesForDates(datesToClean: string[]): {
+    ok: boolean;
+    deletedCount: number;
+    freedBytes: number;
+  } {
+    const targetSet = new Set(datesToClean || []);
+    let deletedCount = 0;
+    let freedBytes = 0;
+    try {
+      if (!fs.existsSync(this.imagesDir)) {
+        return { ok: true, deletedCount: 0, freedBytes: 0 };
+      }
+      for (const f of fs.readdirSync(this.imagesDir)) {
+        if (!f.endsWith('.jpg')) continue;
+        const key = f.replace(/\.jpg$/i, '');
+        const baseDate = key.slice(0, 10);
+        if (targetSet.has(key) || targetSet.has(baseDate)) {
+          const full = path.join(this.imagesDir, f);
+          try {
+            const sz = fs.statSync(full).size;
+            fs.unlinkSync(full);
+            deletedCount += 1;
+            freedBytes += sz;
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return { ok: true, deletedCount, freedBytes };
   }
 
   // --- App Lock Security (Prompt 7.1: scrypt + salt in userData) ---

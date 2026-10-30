@@ -17,32 +17,72 @@ const LEDGER_SYSTEM_INSTRUCTION = `أنت خبير محاسبة ومراجع د�
 مهمتك قراءة صورة صفحة من دفتر يومية محل ذهب مكتوبة بخط اليد باللغة العربية وبأرقام عربية هندية (٠١٢٣٤٥٦٧٨٩) أو إنجليزية.
 
 قواعد حاسمة وملزمة:
-1. الصفحة من دفتر يومية محل ذهب بخط يدوي عربي وأرقام هندية؛ الجانب الأيمن عادة "مبيعات" (sell) والجانب الأيسر "مشتريات" (buy) — تحقق من العنوان المطبوع أو المكتوب أعلى كل نصف.
-2. الأعمدة في كل نصف هي: البيان (اسم الصنف مثل خاتم، غويشة، سلسلة، حلق، دبلة، سبيكة، جنيه، كسر...)، الوزن مقسوم إلى خانتين (جرام، ملي/مليجرام)، والإجمالي (المبلغ بالجنيه).
-3. أمثلة هامة جداً لتمييز الأرقام الهندية المكتوبة بخط اليد حتى لا يختلط عليك الأمر:
+1. تصنيف الورقة (kind):
+   - "day_start": ورقة بدايتها فيها تاريخ + عبارة مثل "يومية يوم / الموافق" + (غالباً) الرصيد السابق أو سعر الذهب أعلى الصفحة.
+   - "continuation": ورقة رأسها ("يومية يوم / الموافق") فارغ أو بلا تاريخ جديد، وتحوي صفوف عمليات تكملة لليوم السابق.
+   - "blank": ورقة مسطرة فارغة تماماً بلا صفوف عمليات.
+   - "cover": غلاف دفتر أو ورقة عنوان لا تحوي جدول عمليات.
+   - "unreadable": صورة مطموسة تماماً لا يمكن قراءة بياناتها.
+2. الصفحة من دفتر يومية محل ذهب بخط يدوي عربي وأرقام هندية؛ الجانب الأيمن عادة "مبيعات" (sell) والجانب الأيسر "مشتريات" (buy) — تحقق من العنوان المطبوع أو المكتوب أعلى كل نصف وحدد side ("buy" أو "sell" أو "both").
+3. الأعمدة في كل نصف هي: البيان (اسم الصنف مثل خاتم، غويشة، سلسلة، حلق، دبلة، سبيكة، جنيه، كسر...)، الوزن مقسوم إلى خانتين (جرام، ملي/مليجرام)، والإجمالي (المبلغ بالجنيه). وإن وجد عمود للرصيد المتتابع قبل/بعد العملية سجّله في running_balance_before و running_balance_after.
+4. أمثلة هامة جداً لتمييز الأرقام الهندية المكتوبة بخط اليد حتى لا يختلط عليك الأمر:
    - الصفر الهندي (٠) نقطة صغيرة، بينما الخمسة الهندية (٥) حلقة مستديرة أو بيضاوية أكبر.
    - الاثنان (٢) فتحتها لليمين فوق السطر، بينما الثلاثة (٣) لها سنّتان أو ثلاث أسنان في الأعلى (وأحياناً تُكتب بشرطة متموجة).
    - الأربعة (٤) تشبه ع معكوسة أو 3 معكوسة، لا تخلطها مع ٢ أو ٣.
    - الستة (٦) رأسها لليسار في الأعلى وعصاها نازلة لليمين، بينما السبعة (٧) على شكل حرف V للأعلى، والثمانية (٨) على شكل Λ للأسفل.
    - التسعة (٩) رأسها مغلق في الأعلى وعصاها نازلة، لا تخلطها مع ٦ أو ٥.
-4. الرقم المكتوب منفرداً أعلى خانة البيان في أول صفحة المبيعات (أو في ترويسة الصفحة) غالباً هو "سعر الذهب اليومي للجرام" (day_gold_price) مثل 3800 أو 7450.
-5. تجاهل تماماً أي كتابة أو خطوط أو علامات صح أو أرصدة أو إجماليات مكتوبة بالحبر الأحمر لأنها علامات مراجعة لاحقة وليست عمليات يومية؛ سجّل نصوصها فقط في مصفوفة red_marks ولا تضعها أبداً ضمن rows.
-6. لا تخمّن أبداً رقماً غير واضح أو مطموس؛ اكتب القيمة الأقرب لما تراه وضع confidence منخفضة (أقل من 0.65).
-7. لا تضف صفوفاً غير موجودة في الصورة إطلاقاً، وتجاهل الأسطر الفارغة.
-8. الصف الإجمالي في أسفل الصفحة أو أسفل الجدول ضعه في totals_row فقط ولا تعتبره عملية داخل rows.`;
+5. الرقم المكتوب منفرداً أعلى خانة البيان في أول صفحة المبيعات (أو في ترويسة الصفحة) غالباً هو "سعر الذهب اليومي للجرام" (day_gold_price) مثل 3800 أو 7450. والرصيد الافتتاحي أعلى الصفحة ضعه في opening_balance.
+6. تجاهل تماماً أي كتابة أو دوائر أو علامات صح أو خطوط أو أرقام مكتوبة بالحبر الأحمر عند استخراج العمليات الأساسية؛ سجّل كل علامة حمراء بدقة في مصفوفة red_marks مع نوعها (circle / tick / underline / strike / number / text / other) ورقم أقرب صف لها (row_hint يبدأ من 1) ولا تضعها أبداً كعملية داخل rows.
+7. لا تخمّن أبداً رقماً غير واضح أو مطموس؛ اكتب القيمة الأقرب لما تراه وضع confidence منخفضة (أقل من 0.65).
+8. لا تضف صفوفاً غير موجودة في الصورة إطلاقاً، وتجاهل الأسطر الفارغة.
+9. الإجماليات المكتوبة بخط اليد أسفل كل جانب (أو المشطوبة والمصححة) ضعها في مصفوفة totals لكل جانب (مع وضع كل القيم المقروءة إن كان هناك شطب وتصحيح في candidates) وفي totals_row، ولا تعتبرها عملية داخل rows.`;
 
 const LEDGER_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
+    kind: {
+      type: Type.STRING,
+      description: 'تصنيف الورقة: day_start أو continuation أو blank أو cover أو unreadable',
+    },
     date: {
       type: Type.STRING,
       nullable: true,
-      description: 'تاريخ الصفحة بصيغة YYYY-MM-DD إن وجد أو null',
+      description: 'تاريخ الصفحة بصيغة YYYY-MM-DD إن وجد أو null (في أوراق التكملة يكون null)',
+    },
+    weekday: {
+      type: Type.STRING,
+      nullable: true,
+      description: 'اسم يوم الأسبوع المكتوب في الترويسة مثل السبت أو الأحد أو null',
     },
     day_gold_price: {
       type: Type.NUMBER,
       nullable: true,
       description: 'سعر الذهب اليومي للجرام المكتوب أعلى الصفحة إن وجد أو null',
+    },
+    opening_balance: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: 'الرصيد السابق / الافتتاحي المكتوب أعلى الورقة إن وجد أو null',
+    },
+    closing_balance: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: 'الرصيد الختامي المكتوب أسفل الورقة إن وجد أو null',
+    },
+    side: {
+      type: Type.STRING,
+      nullable: true,
+      description: 'الجانب الظاهر في الورقة: buy أو sell أو both',
+    },
+    page_number_hint: {
+      type: Type.STRING,
+      nullable: true,
+      description: 'رقم الصفحة المطبوع أو المكتوب إن وجد أو null',
+    },
+    page_confidence: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: 'متوسط درجة الثقة في قراءة الورقة من 0 إلى 1',
     },
     rows: {
       type: Type.ARRAY,
@@ -69,12 +109,72 @@ const LEDGER_RESPONSE_SCHEMA = {
             type: Type.NUMBER,
             description: 'إجمالي المبلغ',
           },
+          running_balance_before: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'الرصيد قبل العملية إن وجد في عمود الرصيد المتتابع أو null',
+          },
+          running_balance_after: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'الرصيد بعد العملية إن وجد في عمود الرصيد المتتابع أو null',
+          },
+          y_ratio: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'الموضع الرأسي التقريبي للصف في الصفحة من 0.0 (أعلى) إلى 1.0 (أسفل)',
+          },
           confidence: {
             type: Type.NUMBER,
             description: 'درجة الثقة في قراءة الصف من 0 إلى 1',
           },
         },
         required: ['type', 'item', 'weight_g', 'weight_ml', 'total', 'confidence'],
+      },
+    },
+    totals: {
+      type: Type.ARRAY,
+      nullable: true,
+      description: 'الإجماليات المكتوبة بخط اليد أسفل كل جانب (sell و buy)',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          side: {
+            type: Type.STRING,
+            description: 'sell أو buy',
+          },
+          handwritten_total_amount: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'إجمالي المبلغ المكتوب بخط اليد أسفل الجدول',
+          },
+          handwritten_total_weight_g: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'إجمالي الوزن بالجرام المكتوب بخط اليد أسفل الجدول',
+          },
+          closing_balance: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'الرصيد الختامي لهذا الجانب إن وجد',
+          },
+          candidates: {
+            type: Type.ARRAY,
+            nullable: true,
+            items: { type: Type.NUMBER },
+            description: 'كل القيم المقروءة للإجمالي إن كان مشطوباً ومكتوباً بجانبه تصحيح',
+          },
+          location_hint: {
+            type: Type.STRING,
+            nullable: true,
+            description: 'وصف مكان الإجمالي مثل أسفل يمين الصفحة',
+          },
+          confidence: {
+            type: Type.NUMBER,
+            description: 'درجة الثقة في قراءة الإجمالي من 0 إلى 1',
+          },
+        },
+        required: ['side', 'handwritten_total_amount', 'handwritten_total_weight_g', 'confidence'],
       },
     },
     totals_row: {
@@ -87,11 +187,92 @@ const LEDGER_RESPONSE_SCHEMA = {
     },
     red_marks: {
       type: Type.ARRAY,
-      items: { type: Type.STRING },
-      description: 'أي كتابات أو أرقام أو ملاحظات مكتوبة بالحبر الأحمر',
+      description: 'علامات الحبر الأحمر (دوائر، صح، شطب، أرقام تصحيح، ملاحظات)',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          type: {
+            type: Type.STRING,
+            description: 'نوع العلامة الحمراء: circle أو tick أو underline أو strike أو number أو text أو other',
+          },
+          row_hint: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'رقم أقرب صف (يبدأ من 1) ترتبط به العلامة الحمراء أو null إن كانت عامة',
+          },
+          text: {
+            type: Type.STRING,
+            description: 'النص أو الرقم المكتوب بالحبر الأحمر أو وصف العلامة',
+          },
+          confidence: {
+            type: Type.NUMBER,
+            description: 'درجة الثقة من 0 إلى 1',
+          },
+        },
+        required: ['type', 'text', 'confidence'],
+      },
     },
   },
-  required: ['date', 'day_gold_price', 'rows', 'totals_row', 'red_marks'],
+  required: ['kind', 'date', 'day_gold_price', 'rows', 'totals_row', 'red_marks'],
+};
+
+const ORIENTATION_REGIONS_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    orientationDeg: {
+      type: Type.NUMBER,
+      description: 'زاوية التدوير اللازمة لتصبح الصفحة معتدلة للقراءة: 0 أو 90 أو 180 أو 270',
+    },
+    confidence: {
+      type: Type.NUMBER,
+      description: 'درجة الثقة في اكتشاف الاتجاه من 0 إلى 1',
+    },
+    isSidewaysTwoSheets: {
+      type: Type.BOOLEAN,
+      description: 'هل الصورة تحوي ورقتين منفصلتين مصورتين معاً (فوق بعض أو بجانب بعض)؟',
+    },
+    regions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          side: {
+            type: Type.STRING,
+            description: 'نوع الورقة أو القسم: sell أو buy أو both',
+          },
+          label: {
+            type: Type.STRING,
+            description: 'وصف المنطقة مثل نصف المبيعات الأيمن أو الورقة العلوية',
+          },
+          x: { type: Type.NUMBER, description: 'إحداثي X النسبي من 0 إلى 1' },
+          y: { type: Type.NUMBER, description: 'إحداثي Y النسبي من 0 إلى 1' },
+          w: { type: Type.NUMBER, description: 'العرض النسبي من 0 إلى 1' },
+          h: { type: Type.NUMBER, description: 'الارتفاع النسبي من 0 إلى 1' },
+        },
+        required: ['side', 'label', 'x', 'y', 'w', 'h'],
+      },
+    },
+  },
+  required: ['orientationDeg', 'confidence', 'isSidewaysTwoSheets', 'regions'],
+};
+
+const WEAK_CELLS_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    verifications: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          cellId: { type: Type.STRING },
+          verifiedValue: { type: Type.STRING },
+          confidence: { type: Type.NUMBER },
+        },
+        required: ['cellId', 'verifiedValue', 'confidence'],
+      },
+    },
+  },
+  required: ['verifications'],
 };
 
 const MAX_CONCURRENT_REQUESTS = 2;
@@ -149,6 +330,13 @@ async function withRetryAndConcurrency<T>(fn: () => Promise<T>, maxRetries = 2):
   } finally {
     activeRequests = Math.max(0, activeRequests - 1);
   }
+}
+
+function createGenAiClient(apiKey: string) {
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+  });
 }
 
 export class GeminiService {
@@ -240,7 +428,7 @@ export class GeminiService {
       return { ok: false, error: 'لم يتم إدخال مفتاح Gemini بعد. أدخل المفتاح أولاً.' };
     }
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = createGenAiClient(apiKey);
       const response = await ai.models.generateContent({
         model: modelName || DEFAULT_GEMINI_MODEL,
         contents: 'أجب بكلمة واحدة فقط: متصل',
@@ -260,6 +448,7 @@ export class GeminiService {
     forcedSideType?: 'buy' | 'sell' | 'auto';
     slicePosition?: 'full' | 'top' | 'bottom';
     modelName?: string;
+    dictionaryHints?: string;
   }): Promise<{ ok: boolean; data?: any; error?: string }> {
     const apiKey = this.getStoredApiKey();
     if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
@@ -276,7 +465,7 @@ export class GeminiService {
 
     try {
       const data = await withRetryAndConcurrency(async () => {
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = createGenAiClient(apiKey);
         const sideHint =
           params.forcedSideType === 'buy'
             ? 'هذه الصورة تمثل جانب المشتريات فقط (buy). اجعل جميع العمليات المقروءة من نوع buy.'
@@ -288,8 +477,12 @@ export class GeminiService {
           params.slicePosition === 'top'
             ? 'ملاحظة: هذه هي الشريحة العلوية (النصف الأول) من الصفحة. اقرأ كل صف واضح فيها بدقة، واستخرج التاريخ وسعر الذهب اليومي من الترويسة إن وجدا.'
             : params.slicePosition === 'bottom'
-            ? 'ملاحظة: هذه هي الشريحة السفلية (النصف الثاني) من الصفحة. اقرأ كل صف عملية واضح فيها، وضع صف الإجمالي السفلي في totals_row فقط.'
+            ? 'ملاحظة: هذه هي الشريحة السفلية (النصف الثاني) من الصفحة. اقرأ كل صف عملية واضح فيها، وضع صف الإجمالي السفلي في totals و totals_row فقط.'
             : '';
+
+        const dictText = params.dictionaryHints
+          ? `\nتعليمات إضافية من قاموس تصحيحات المراجع المحلي (التزم بها عند قراءة الأصناف والأرقام المتشابهة):\n${params.dictionaryHints}`
+          : '';
 
         const response = await ai.models.generateContent({
           model: modelToUse,
@@ -304,7 +497,7 @@ export class GeminiService {
                   },
                 },
                 {
-                  text: `اقرأ صفحة دفتر الذهب المرفقة بدقة وأرجع النتيجة بصيغة JSON مطابقة للمخطط المطلوب. ${sideHint} ${sliceHint}`,
+                  text: `اقرأ صفحة دفتر الذهب المرفقة بدقة وأرجع النتيجة بصيغة JSON مطابقة للمخطط المطلوب (شاملاً التصنيف kind، التاريخ، الرصيد المتتابع إن وجد، الإجماليات المكتوبة بخط اليد totals، وعلامات الحبر الأحمر red_marks). ${sideHint} ${sliceHint}${dictText}`,
                 },
               ],
             },
@@ -318,12 +511,168 @@ export class GeminiService {
         });
 
         const text = response.text || '{}';
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        // Ensure backward-compatible totals_row if model only filled totals[]
+        if (!parsed.totals_row && Array.isArray(parsed.totals) && parsed.totals.length > 0) {
+          const firstTot = parsed.totals[0];
+          parsed.totals_row = {
+            weight_g: firstTot.handwritten_total_weight_g ?? null,
+            total: firstTot.handwritten_total_amount ?? null,
+          };
+        }
+        return parsed;
       });
 
       return { ok: true, data };
     } catch (err: any) {
       return { ok: false, error: err?.message || 'حدث خطأ أثناء قراءة صورة الدفتر.' };
+    }
+  }
+
+  /**
+   * H2: Lightweight orientation (0/90/180/270) and multi-sheet region detection
+   */
+  public async detectPageOrientationAndRegions(params: {
+    imageBase64: string;
+    mimeType?: string;
+    modelName?: string;
+  }): Promise<{
+    ok: boolean;
+    data?: {
+      orientationDeg: 0 | 90 | 180 | 270;
+      confidence: number;
+      isSidewaysTwoSheets: boolean;
+      regions: Array<{
+        side: 'buy' | 'sell' | 'both';
+        label: string;
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+      }>;
+    };
+    error?: string;
+  }> {
+    const apiKey = this.getStoredApiKey();
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      return { ok: false, error: 'مفتاح Gemini غير مسجل.' };
+    }
+    if (!params.imageBase64) {
+      return { ok: false, error: 'بيانات الصورة مطلوبة.' };
+    }
+    const modelToUse = params.modelName?.trim() || DEFAULT_GEMINI_MODEL;
+
+    try {
+      const data = await withRetryAndConcurrency(async () => {
+        const ai = createGenAiClient(apiKey);
+        const response = await ai.models.generateContent({
+          model: modelToUse,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    data: params.imageBase64,
+                    mimeType: params.mimeType || 'image/jpeg',
+                  },
+                },
+                {
+                  text: `افحص اتجاه صورة صفحة دفتر الذهب هذه بالاعتماد على العناوين المطبوعة ("بسم الله الرحمن الرحيم"، "المشتريات"، "المبيعات"، "يومية يوم").
+1) حدد زاوية التدوير اللازمة مع عقارب الساعة (0 أو 90 أو 180 أو 270) لتصبح الصفحة معتدلة القراءة.
+2) حدد ما إذا كانت الصورة تحوي ورقتين متقابلتين (يمين مبيعات sell / يسار مشتريات buy) أو ورقتين فوق بعض، وأرجع المستطيلات النسبية (x, y, w, h من 0 إلى 1 بعد التدوير) لكل قسم.`,
+                },
+              ],
+            },
+          ],
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: ORIENTATION_REGIONS_SCHEMA,
+            temperature: 0.05,
+          },
+        });
+        const parsed = JSON.parse(response.text || '{}');
+        const rawDeg = Number(parsed.orientationDeg) || 0;
+        const normalizedDeg = ([0, 90, 180, 270].includes(rawDeg) ? rawDeg : 0) as 0 | 90 | 180 | 270;
+        return {
+          orientationDeg: normalizedDeg,
+          confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.85,
+          isSidewaysTwoSheets: Boolean(parsed.isSidewaysTwoSheets),
+          regions: Array.isArray(parsed.regions) ? parsed.regions : [],
+        };
+      });
+
+      return { ok: true, data };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'تعذر فحص اتجاه الصفحة.' };
+    }
+  }
+
+  /**
+   * P4: Batched second-pass verification of weak cells (confidence < 0.7) in a single API call
+   */
+  public async verifyWeakCells(params: {
+    cells: Array<{
+      cellId: string;
+      field: 'weight' | 'total' | 'item';
+      firstReadValue: string | number;
+      imageBase64: string;
+    }>;
+    modelName?: string;
+  }): Promise<{
+    ok: boolean;
+    verifications?: Array<{ cellId: string; verifiedValue: string; confidence: number }>;
+    error?: string;
+  }> {
+    const apiKey = this.getStoredApiKey();
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      return { ok: false, error: 'مفتاح Gemini غير مسجل.' };
+    }
+    const cells = Array.isArray(params.cells) ? params.cells.slice(0, 20) : [];
+    if (cells.length === 0) {
+      return { ok: true, verifications: [] };
+    }
+
+    const modelToUse = params.modelName?.trim() || DEFAULT_GEMINI_MODEL;
+
+    try {
+      const verifications = await withRetryAndConcurrency(async () => {
+        const ai = createGenAiClient(apiKey);
+        const parts: any[] = [];
+        for (const c of cells) {
+          parts.push({
+            inlineData: {
+              data: c.imageBase64,
+              mimeType: 'image/jpeg',
+            },
+          });
+          parts.push({
+            text: `خلية رقم [${c.cellId}] (نوع الحقل: ${
+              c.field === 'weight' ? 'وزن بالجرام والملي' : c.field === 'total' ? 'مبلغ بالجنيه' : 'اسم صنف'
+            }، القراءة الأولى المشكوك فيها: "${c.firstReadValue}")`,
+          });
+        }
+        parts.push({
+          text: 'ركّز بدقة شديدة في الأرقام الهندية المكتوبة بخط اليد في كل خلية مقصوصة أعلاه، وأرجع القيمة الصحيحة لكل cellId مع درجة الثقة.',
+        });
+
+        const response = await ai.models.generateContent({
+          model: modelToUse,
+          contents: [{ role: 'user', parts }],
+          config: {
+            systemInstruction: LEDGER_SYSTEM_INSTRUCTION,
+            responseMimeType: 'application/json',
+            responseSchema: WEAK_CELLS_RESPONSE_SCHEMA,
+            temperature: 0.05,
+          },
+        });
+        const parsed = JSON.parse(response.text || '{}');
+        return Array.isArray(parsed.verifications) ? parsed.verifications : [];
+      });
+
+      return { ok: true, verifications };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'تعذر إعادة التحقق من الخلايا الضعيفة.' };
     }
   }
 
@@ -343,7 +692,7 @@ export class GeminiService {
 
     try {
       const summary = await withRetryAndConcurrency(async () => {
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = createGenAiClient(apiKey);
         const promptText = `أنت كبير مراجعي حسابات محلات ذهب في مصر. أمامك إحصائيات مجمعة فقط (بدون أي أسماء أشخاص أو صفوف خام) لنتيجة فحص ومراجعة محل ذهب:
 ${JSON.stringify(params.aggregatedStats, null, 2)}
 

@@ -42,6 +42,15 @@ export interface GoldApi {
     checkImagesExist?: (
       dates: string[]
     ) => Promise<{ ok: boolean; missingDates: string[] }>;
+    getImagesStorageInfo?: () => Promise<{
+      ok: boolean;
+      count: number;
+      totalBytes: number;
+      files: { key: string; date: string; sizeBytes: number }[];
+    }>;
+    cleanupImagesForDates?: (
+      dates: string[]
+    ) => Promise<{ ok: boolean; deletedCount: number; freedBytes: number }>;
     exportJson: (payload: any) => Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }>;
     importJson: () => Promise<{ ok: boolean; data?: any; canceled?: boolean; error?: string }>;
   };
@@ -52,8 +61,47 @@ export interface GoldApi {
       forcedSideType?: 'buy' | 'sell' | 'auto';
       slicePosition?: 'full' | 'top' | 'bottom';
       modelName?: string;
+      dictionaryHints?: string;
       passcode?: string;
     }) => Promise<{ ok: boolean; data?: any; requirePasscode?: boolean; error?: string }>;
+    detectOrientation?: (params: {
+      imageBase64: string;
+      mimeType?: string;
+      modelName?: string;
+      passcode?: string;
+    }) => Promise<{
+      ok: boolean;
+      data?: {
+        orientationDeg: 0 | 90 | 180 | 270;
+        confidence: number;
+        isSidewaysTwoSheets: boolean;
+        regions: Array<{
+          side: 'buy' | 'sell' | 'both';
+          label: string;
+          x: number;
+          y: number;
+          w: number;
+          h: number;
+        }>;
+      };
+      requirePasscode?: boolean;
+      error?: string;
+    }>;
+    verifyWeakCells?: (params: {
+      cells: Array<{
+        cellId: string;
+        field: 'weight' | 'total' | 'item';
+        firstReadValue: string | number;
+        imageBase64: string;
+      }>;
+      modelName?: string;
+      passcode?: string;
+    }) => Promise<{
+      ok: boolean;
+      verifications?: Array<{ cellId: string; verifiedValue: string; confidence: number }>;
+      requirePasscode?: boolean;
+      error?: string;
+    }>;
   };
   ai: {
     summarize: (params: {
@@ -293,6 +341,36 @@ export function ensureGoldApiBridge(): GoldApi {
         };
       },
 
+      getImagesStorageInfo: async () => {
+        const res = await safeFetchJson('/api/desktop/storage/images-info');
+        if (res && res.ok) return res;
+        return { ok: true, count: 0, totalBytes: 0, files: [] };
+      },
+
+      cleanupImagesForDates: async (dates: string[]) => {
+        try {
+          const existing = (await idbGet<Record<string, string>>(IDB_FALLBACK_IMAGES_KEY)) || {};
+          const set = new Set(dates);
+          for (const k of Object.keys(existing)) {
+            if (set.has(k) || set.has(k.slice(0, 10))) {
+              delete existing[k];
+            }
+          }
+          await idbSet(IDB_FALLBACK_IMAGES_KEY, existing);
+        } catch {
+          // ignore
+        }
+        const res = await safeFetchJson('/api/desktop/storage/cleanup-images', {
+          method: 'POST',
+          body: JSON.stringify({ dates }),
+        });
+        return {
+          ok: Boolean(res?.ok),
+          deletedCount: Number(res?.deletedCount) || 0,
+          freedBytes: Number(res?.freedBytes) || 0,
+        };
+      },
+
       exportJson: async (payload: any) => {
         try {
           const str = JSON.stringify(payload, null, 2);
@@ -324,6 +402,28 @@ export function ensureGoldApiBridge(): GoldApi {
           headers['x-app-passcode'] = params.passcode;
         }
         return safeFetchJson('/api/desktop/ocr/read-ledger', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(params),
+        });
+      },
+      detectOrientation: async (params) => {
+        const headers: Record<string, string> = {};
+        if (params.passcode) {
+          headers['x-app-passcode'] = params.passcode;
+        }
+        return safeFetchJson('/api/desktop/ocr/detect-orientation', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(params),
+        });
+      },
+      verifyWeakCells: async (params) => {
+        const headers: Record<string, string> = {};
+        if (params.passcode) {
+          headers['x-app-passcode'] = params.passcode;
+        }
+        return safeFetchJson('/api/desktop/ocr/verify-weak-cells', {
           method: 'POST',
           headers,
           body: JSON.stringify(params),

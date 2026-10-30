@@ -30,6 +30,9 @@ const goldApi = {
     saveVisitSnapshot: (visitId: string, visitData: any) =>
       ipcRenderer.invoke('storage:saveVisitSnapshot', visitId, visitData),
     checkImagesExist: (dates: string[]) => ipcRenderer.invoke('storage:checkImagesExist', dates),
+    getImagesStorageInfo: () => ipcRenderer.invoke('storage:getImagesStorageInfo'),
+    cleanupImagesForDates: (dates: string[]) =>
+      ipcRenderer.invoke('storage:cleanupImagesForDates', dates),
     exportJson: (payload: any) => ipcRenderer.invoke('storage:exportJson', payload),
     importJson: () => ipcRenderer.invoke('storage:importJson'),
   },
@@ -40,7 +43,22 @@ const goldApi = {
       forcedSideType?: 'buy' | 'sell' | 'auto';
       slicePosition?: 'full' | 'top' | 'bottom';
       modelName?: string;
+      dictionaryHints?: string;
     }) => ipcRenderer.invoke('ocr:readLedger', params),
+    detectOrientation: (params: {
+      imageBase64: string;
+      mimeType?: string;
+      modelName?: string;
+    }) => ipcRenderer.invoke('ocr:detectOrientation', params),
+    verifyWeakCells: (params: {
+      cells: Array<{
+        cellId: string;
+        field: 'weight' | 'total' | 'item';
+        firstReadValue: string | number;
+        imageBase64: string;
+      }>;
+      modelName?: string;
+    }) => ipcRenderer.invoke('ocr:verifyWeakCells', params),
   },
   ai: {
     summarize: (params: { aggregatedStats: any; modelName?: string }) =>

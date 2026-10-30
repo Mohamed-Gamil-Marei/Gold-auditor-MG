@@ -90,6 +90,17 @@ export const DEFAULT_SETTINGS: AuditSettings = {
   externalBackupPath: '',
   onboardingCompleted: false,
   includePersonDataInExports: true,
+  ledgerTotalSmallDiffAmount: 50,
+  ledgerTotalLargeDiffAmount: 200,
+  ledgerTotalWeightToleranceG: 0.25,
+  ledgerArithmeticTemplate: {
+    enabled: true,
+    sellDirection: 'add',
+    buyDirection: 'subtract',
+    checkWeightAndCount: true,
+  },
+  convertRedCircleToReviewed: false,
+  retainScannedPagesWithDay: true,
 };
 
 export interface CarryOverConflictInfo {
@@ -191,6 +202,7 @@ export interface AuditStoreState {
     rows: Array<
       Omit<Operation, 'id' | 'createdAt' | 'updatedAt' | 'reviewedFlag' | 'note'> & {
         note?: string;
+        reviewedFlag?: boolean;
         importBatchId?: string;
         sourceType?: string;
       }
@@ -201,6 +213,8 @@ export interface AuditStoreState {
       sourceType?: string;
       fileSha?: string;
       attachedFileRef?: string;
+      redMarksSummary?: ImportBatchRecord['redMarksSummary'];
+      ledgerTotalsDiffSummary?: ImportBatchRecord['ledgerTotalsDiffSummary'];
     }
   ) => { ok: boolean; addedCount: number; batchId?: string; error?: string };
   updateOperation: (id: string, patch: Partial<Operation>, reason?: string) => boolean;
@@ -208,6 +222,7 @@ export interface AuditStoreState {
   undoDeleteOperation: () => void;
   undoLastAddedOperation: () => boolean;
   toggleOperationReviewed: (id: string) => void;
+  convertRedCirclesToReviewedFlag: (dateFilter?: string) => number;
 
   // F7: Recycle Bin
   restoreFromRecycleBin: (deletedEntryId: string) => boolean;
@@ -1335,8 +1350,15 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
         workerId: r.workerId,
         direction: r.direction,
         category: r.category,
-        reviewedFlag: false,
+        reviewedFlag: r.reviewedFlag ?? false,
         note: r.note || '',
+        runningBalanceBefore: r.runningBalanceBefore,
+        runningBalanceAfter: r.runningBalanceAfter,
+        pageNumberHint: r.pageNumberHint,
+        rowOrderInPage: r.rowOrderInPage,
+        ocrConfidence: r.ocrConfidence,
+        bookMarks: r.bookMarks,
+        sourcePageRef: r.sourcePageRef,
         createdAt: now + i,
         updatedAt: now + i,
         importBatchId: r.importBatchId || batchId,
@@ -1402,6 +1424,8 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
           dates: uniqueDates,
           attachedFileRef: batchMeta?.attachedFileRef,
           rolledBack: false,
+          redMarksSummary: batchMeta?.redMarksSummary,
+          ledgerTotalsDiffSummary: batchMeta?.ledgerTotalsDiffSummary,
         };
 
         const nextOps = [...s.operations, ...createdOps];
@@ -1750,6 +1774,47 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       const existing = state.operations.find((o) => o.id === id);
       if (!existing) return;
       get().updateOperation(id, { reviewedFlag: !existing.reviewedFlag });
+    },
+
+    convertRedCirclesToReviewedFlag: (dateFilter) => {
+      const state = get();
+      let updatedCount = 0;
+      const now = Date.now();
+      const targetIds = new Set<string>();
+
+      for (const op of state.operations) {
+        if (dateFilter && op.date !== dateFilter) continue;
+        if (state.daysMap[op.date]?.locked) continue;
+        if (op.reviewedFlag) continue;
+        if (op.bookMarks && op.bookMarks.some((m) => m.type === 'circle')) {
+          targetIds.add(op.id);
+          updatedCount += 1;
+        }
+      }
+
+      if (updatedCount === 0) return 0;
+
+      set((s) => {
+        const nextOps = s.operations.map((op) =>
+          targetIds.has(op.id) ? { ...op, reviewedFlag: true } : op
+        );
+        const logEntry: AuditLogEntry = {
+          id: `log-redcircle-${now}-${randomSuffix(4)}`,
+          timestamp: now,
+          action: 'red_circle_to_reviewed',
+          date: dateFilter || s.currentDate,
+          wasLocked: false,
+          description: `تحويل علامة الدائرة الحمراء في الدفتر إلى علامة مراجعة في البرنامج لعدد ${updatedCount} عملية`,
+          oldValue: 'غير مراجع',
+          newValue: `تم تعليم ${updatedCount} عملية كمراجعة`,
+        };
+        const nextLogs = [logEntry, ...s.auditLogs];
+        const nextState = { ...s, operations: nextOps, auditLogs: nextLogs };
+        persistStateSnapshot(nextState);
+        return { operations: nextOps, auditLogs: nextLogs };
+      });
+
+      return updatedCount;
     },
 
     addPerson: (pInput) => {

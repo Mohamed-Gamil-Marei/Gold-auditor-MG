@@ -6,6 +6,69 @@ export type PersonDirection = 'gave_him' | 'received_from_him';
 
 export type GoldKarat = 18 | 21 | 24 | 'other';
 
+export type LedgerPageKind = 'day_start' | 'continuation' | 'blank' | 'cover' | 'unreadable';
+
+export type LedgerPageSide = 'buy' | 'sell' | 'both';
+
+export type RedMarkType =
+  | 'circle'
+  | 'tick'
+  | 'underline'
+  | 'strike'
+  | 'number'
+  | 'text'
+  | 'other';
+
+export interface RedMarkItem {
+  id?: string;
+  type: RedMarkType;
+  row_hint?: number | string | null;
+  text?: string;
+  confidence: number;
+  suggestedCorrectionValue?: number;
+}
+
+export interface HandwrittenSideTotals {
+  side: 'buy' | 'sell';
+  handwritten_total_amount: number | null;
+  handwritten_total_weight_g: number | null;
+  closing_balance?: number | null;
+  candidates?: number[];
+  location_hint?: string;
+  confidence: number;
+}
+
+export interface SideTotalsComparison {
+  readSumAmount: number;
+  readSumWeightG: number;
+  handwrittenAmount?: number | null;
+  handwrittenWeightG?: number | null;
+  approvedAmount?: number | null;
+  approvedWeightG?: number | null;
+  candidates?: number[];
+  status: 'match' | 'small_diff' | 'large_diff' | 'missing';
+  diffAmount: number;
+  diffWeightG: number;
+  approvedByAuditor?: boolean;
+}
+
+export interface LedgerPageRegion {
+  id: string;
+  label: string;
+  side: 'buy' | 'sell' | 'both';
+  x: number; // 0..1
+  y: number; // 0..1
+  w: number; // 0..1
+  h: number; // 0..1
+}
+
+export interface SourcePageRef {
+  pageIndex: number; // 1-indexed page in file or day
+  pageImageKey?: string; // e.g. '2026-10-27__p1' or '2026-10-27'
+  rowYRatio?: number; // 0..1 vertical position on the page
+  side?: 'buy' | 'sell';
+}
+
 export interface Operation {
   id: string;
   date: string; // YYYY-MM-DD
@@ -23,6 +86,16 @@ export interface Operation {
   note: string;
   importBatchId?: string; // G3: Batch ID if imported
   sourceType?: string; // G3: 'manual' | 'excel' | 'csv' | 'pdf' | 'ocr' | 'docx' | 'html' | 'json' | 'clipboard'
+  // H4: Running balance columns from paper ledger
+  runningBalanceBefore?: number;
+  runningBalanceAfter?: number;
+  pageNumberHint?: string | number;
+  rowOrderInPage?: number;
+  ocrConfidence?: number;
+  // H5: Paper ledger red ink marks linked to this row (separate from reviewedFlag)
+  bookMarks?: RedMarkItem[];
+  // P5: Link to compressed original ledger page image & row vertical position
+  sourcePageRef?: SourcePageRef;
   createdAt: number;
   updatedAt: number;
 }
@@ -43,6 +116,15 @@ export interface KaratBalanceEntry {
 }
 
 export type KaratKey = '18' | '21' | '24' | 'other';
+
+export interface DayLedgerPageMeta {
+  pageIndex: number;
+  imageKey: string;
+  side?: LedgerPageSide;
+  kind?: LedgerPageKind;
+  pageNumberHint?: string;
+  dataUrl?: string;
+}
 
 export interface DayInfo {
   date: string; // YYYY-MM-DD
@@ -65,6 +147,15 @@ export interface DayInfo {
   unlockReason?: string;
   ledgerImageDataUrl?: string; // Loaded on demand in runtime
   ledgerImageFile?: string; // Filename in data/images/<date>.jpg
+  // H1/H3/H4: Handwritten ledger balances & totals comparison
+  openingLedgerBalance?: number;
+  closingLedgerBalance?: number;
+  ledgerTotalsComparison?: {
+    sell?: SideTotalsComparison;
+    buy?: SideTotalsComparison;
+  };
+  // P5: Ordered list of compressed ledger pages attached to this day
+  ledgerPages?: DayLedgerPageMeta[];
   checklist?: DayChecklist;
 }
 
@@ -124,7 +215,8 @@ export type AuditActionType =
   | 'import_batch'
   | 'rollback_batch'
   | 'snapshot_undo'
-  | 'quarantine_restore';
+  | 'quarantine_restore'
+  | 'red_circle_to_reviewed';
 
 export interface AuditLogEntry {
   id: string;
@@ -185,6 +277,13 @@ export interface AuditExceptions {
 
 export type ShortSpaceWeightMode = 'ask' | 'decimal' | 'milli';
 
+export interface LedgerArithmeticTemplateConfig {
+  enabled: boolean;
+  sellDirection: 'add' | 'subtract'; // How sell operation affects running balance
+  buyDirection: 'add' | 'subtract';  // How buy operation affects running balance
+  checkWeightAndCount: boolean;
+}
+
 export interface AuditSettings {
   sensitivityPreset: SensitivityPreset;
   priceDiffMediumPct: number; // default 1.5% beyond allowed range
@@ -218,6 +317,19 @@ export interface AuditSettings {
   lastExternalBackupAt?: number; // Timestamp of last external folder sync
   onboardingCompleted?: boolean; // Whether first-run quick setup was completed
   includePersonDataInExports?: boolean; // G2.7: Default true for auditor
+  // H3: Handwritten ledger total matching tolerances
+  ledgerTotalSmallDiffAmount?: number; // default 50 EGP
+  ledgerTotalLargeDiffAmount?: number; // default 200 EGP
+  ledgerTotalWeightToleranceG?: number; // default 0.25 g
+  // H4: Paper ledger arithmetic template config
+  ledgerArithmeticTemplate?: LedgerArithmeticTemplateConfig;
+  // H5: Manual option to convert red circle marks to reviewedFlag
+  convertRedCircleToReviewed?: boolean;
+  // H2.7 / P5: Retain scanned ledger pages with the day
+  retainScannedPagesWithDay?: boolean;
+  // H3.6 & P3: Additional toggles
+  blockImportOnUnapprovedLargeDiff?: boolean;
+  enableSelfLearningDictionary?: boolean;
 }
 
 export interface BackupFileInfo {
@@ -285,6 +397,10 @@ export interface AuditVisitSummarySnapshot {
   unreviewedHighCount: number;
   sellAnomaliesImpact: number;
   buyAnomaliesImpact: number;
+  // H3.7 & H5.6: Ledger totals diff & red marks summary in final visit report
+  ledgerTotalsNetSellDiff?: number;
+  ledgerTotalsNetBuyDiff?: number;
+  redMarksCount?: number;
 }
 
 export interface AuditVisit {
@@ -361,6 +477,8 @@ export interface UnifiedFilterState {
   paymentType: 'all' | 'cash' | 'credit';
   dayLockState: 'all' | 'locked' | 'open';
   searchQuery: string;
+  // H5.3: Filter by paper ledger red marks
+  bookMarkState?: 'all' | 'has_mark' | 'no_mark' | 'red_number_diff';
 }
 
 export interface SavedFilterPreset {
@@ -384,6 +502,13 @@ export interface ImportBatchRecord {
   dates: string[];
   attachedFileRef?: string;
   rolledBack?: boolean;
+  // H5.6: Saved red marks & H3 totals summary for batch reference
+  redMarksSummary?: RedMarkItem[];
+  ledgerTotalsDiffSummary?: {
+    date: string;
+    sellDiffAmount: number;
+    buyDiffAmount: number;
+  }[];
 }
 
 export interface ImportMappingTemplate {
