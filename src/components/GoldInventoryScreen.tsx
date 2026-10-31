@@ -16,6 +16,7 @@ import { formatNumber, formatWeight, parseWeightInput } from '../utils/numerals'
 import { computeDayGoldInventory, KARAT_KEYS } from '../utils/checks/checkGoldInventoryBalance';
 import { exportGoldInventoryExcel } from '../utils/exportImport';
 import { ensureGoldApiBridge } from '../utils/goldApiBridge';
+import { DayCloseAndBucketsModal } from './common/DayCloseAndBucketsModal';
 
 interface Props {
   onOpenDayInFastEntry?: (date: string) => void;
@@ -48,6 +49,7 @@ export const GoldInventoryScreen: React.FC<Props> = ({ onOpenDayInFastEntry }) =
   });
   const [toDate, setToDate] = useState<string>(currentDate);
   const [selectedKaratTab, setSelectedKaratTab] = useState<KaratKey | 'all_21'>('21');
+  const [showDayCloseModal, setShowDayCloseModal] = useState<boolean>(false);
 
   const activeDates = useMemo(() => {
     const dateSet = new Set<string>();
@@ -276,6 +278,16 @@ export const GoldInventoryScreen: React.FC<Props> = ({ onOpenDayInFastEntry }) =
 
           <button
             type="button"
+            onClick={() => setShowDayCloseModal(true)}
+            className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            title="مطابقة مصادر البيع الثلاثة (الريون / الكيس / القديم) وقفل اليوم (H7/H10)"
+          >
+            <Scale className="w-3.5 h-3.5" />
+            قفل اليوم ومطابقة المصادر (H10/H7)
+          </button>
+
+          <button
+            type="button"
             onClick={handleSavePdf}
             className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
@@ -284,6 +296,12 @@ export const GoldInventoryScreen: React.FC<Props> = ({ onOpenDayInFastEntry }) =
           </button>
         </div>
       </div>
+
+      <DayCloseAndBucketsModal
+        isOpen={showDayCloseModal}
+        date={currentDate}
+        onClose={() => setShowDayCloseModal(false)}
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">

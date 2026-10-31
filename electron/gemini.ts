@@ -16,26 +16,27 @@ export interface GeminiKeyManagerOptions {
 const LEDGER_SYSTEM_INSTRUCTION = `أنت خبير محاسبة ومراجع دفاتر محلات ذهب مصرية وعربية.
 مهمتك قراءة صورة صفحة من دفتر يومية محل ذهب مكتوبة بخط اليد باللغة العربية وبأرقام عربية هندية (٠١٢٣٤٥٦٧٨٩) أو إنجليزية.
 
-قواعد حاسمة وملزمة:
-1. تصنيف الورقة (kind):
-   - "day_start": ورقة بدايتها فيها تاريخ + عبارة مثل "يومية يوم / الموافق" + (غالباً) الرصيد السابق أو سعر الذهب أعلى الصفحة.
-   - "continuation": ورقة رأسها ("يومية يوم / الموافق") فارغ أو بلا تاريخ جديد، وتحوي صفوف عمليات تكملة لليوم السابق.
-   - "blank": ورقة مسطرة فارغة تماماً بلا صفوف عمليات.
-   - "cover": غلاف دفتر أو ورقة عنوان لا تحوي جدول عمليات.
-   - "unreadable": صورة مطموسة تماماً لا يمكن قراءة بياناتها.
-2. الصفحة من دفتر يومية محل ذهب بخط يدوي عربي وأرقام هندية؛ الجانب الأيمن عادة "مبيعات" (sell) والجانب الأيسر "مشتريات" (buy) — تحقق من العنوان المطبوع أو المكتوب أعلى كل نصف وحدد side ("buy" أو "sell" أو "both").
-3. الأعمدة في كل نصف هي: البيان (اسم الصنف مثل خاتم، غويشة، سلسلة، حلق، دبلة، سبيكة، جنيه، كسر...)، الوزن مقسوم إلى خانتين (جرام، ملي/مليجرام)، والإجمالي (المبلغ بالجنيه). وإن وجد عمود للرصيد المتتابع قبل/بعد العملية سجّله في running_balance_before و running_balance_after.
-4. أمثلة هامة جداً لتمييز الأرقام الهندية المكتوبة بخط اليد حتى لا يختلط عليك الأمر:
+بطاقة تعريف الدفتر (قواعد ثابتة وملزمة):
+1. كل يوم له ورقتان متقابلتان: اليمين = المبيعات (sell)، واليسار = المشتريات (buy). التاريخ والسعر اليومي في رأس الورقة الأولى. اليوم قد يمتد على أكثر من ورقة؛ أوراق التكملة تاريخها فارغ (continuation).
+   - للتحقق المزدوج (H-A): اقرأ العنوان المطبوع أعلى الورقة (printed_header_side: "sell" أو "buy" أو "both") وحدد في has_balance_column هل الورقة تحتوي على صف/أعمدة "الرصيد/الرصيد السابق" (وهي علامة ورقة المبيعات).
+2. كل ورقة فيها كتلتان من الأعمدة جنب بعض (H-C):
+   - الكتلة 1 = الكتلة اليمنى (block_index = 1)، والكتلة 2 = الكتلة اليسرى (block_index = 2).
+   - ترتيب القراءة والتسجيل الزمني: اقرأ الكتلة اليمنى (1) كلها من أعلى لأسفل، ثم الكتلة اليسرى (2) كلها من أعلى لأسفل.
+   - لكل صف أرجع block_index (1 أو 2) و line_in_block (رقم السطر المسطّر داخل الكتلة يبدأ من 1 شاملاً السطور الفارغة إن وُجدت).
+3. أعمدة كل كتلة: البيان (item)، الوزن مقسوم إلى خانتين (جرام weight_g، وملي weight_ml)، والإجمالي (total). وفي ورقة المبيعات أيضاً: الرصيد السابق/إجمالي الرصيد (running_balance_before, running_balance_after, book_running_cash).
+   - ورقة المبيعات (اليمين) فيها رصيد الخزنة أعلى الورقة (book_opening_cash) والرصيد الختامي أسفل آخر ورقة مبيعات (book_closing_cash).
+   - أي سطر في ورقة المبيعات يبدو حركة نقدية وليس بيع ذهب (مثل "كاش"، "مصروف"، "سلفة"، "دفعة") ضعه أيضاً في cash_movement_suspects.
+4. الأرقام الحمراء (غالباً داخل دوائر بجانب الصف) = عدد القطع المباعة من الريون (pieces)، وليست مبالغ ولا أوزاناً ولا علامات مراجعة!
+   - ضع العدد الأحمر المرتبط بالصف في حقل pieces (عدد صحيح مثل 1 أو 2 أو 3) ومعه pieces_confidence، ولا تعتبره مبلغاً أو وزناً أو صفاً جديداً أبداً.
+   - الأرقام الحمراء المنفصلة التي لا ترتبط بصف معين ضعها في red_other.
+   - الكتابات الحمراء في المساحة الفاضية آخر اليوم (جمع/طرح/رصيد مكتوب باليد خارج الجدول) ضعها في free_area_notes.
+5. مصادر البيع (H7 & H-B): الريون (المعروض)، الكيس/العلب (تُحدَّد بكلمة "كيس/علبة/علب" في البيان)، الذهب القديم (تُحدَّد بالكلمات: "قديم / من القديم / من الكسر / كسر اليوم"). إن ظهرت كلمة تدل على المصدر ضعها في source_hint. وإن وُجدت أوزان مكتوبة للكيس أو القديم خارج الصفوف ضعها في bucket_weights.
+6. تمييز الأرقام الهندية المكتوبة بخط اليد بدقة:
    - الصفر الهندي (٠) نقطة صغيرة، بينما الخمسة الهندية (٥) حلقة مستديرة أو بيضاوية أكبر.
-   - الاثنان (٢) فتحتها لليمين فوق السطر، بينما الثلاثة (٣) لها سنّتان أو ثلاث أسنان في الأعلى (وأحياناً تُكتب بشرطة متموجة).
-   - الأربعة (٤) تشبه ع معكوسة أو 3 معكوسة، لا تخلطها مع ٢ أو ٣.
-   - الستة (٦) رأسها لليسار في الأعلى وعصاها نازلة لليمين، بينما السبعة (٧) على شكل حرف V للأعلى، والثمانية (٨) على شكل Λ للأسفل.
-   - التسعة (٩) رأسها مغلق في الأعلى وعصاها نازلة، لا تخلطها مع ٦ أو ٥.
-5. الرقم المكتوب منفرداً أعلى خانة البيان في أول صفحة المبيعات (أو في ترويسة الصفحة) غالباً هو "سعر الذهب اليومي للجرام" (day_gold_price) مثل 3800 أو 7450. والرصيد الافتتاحي أعلى الصفحة ضعه في opening_balance.
-6. تجاهل تماماً أي كتابة أو دوائر أو علامات صح أو خطوط أو أرقام مكتوبة بالحبر الأحمر عند استخراج العمليات الأساسية؛ سجّل كل علامة حمراء بدقة في مصفوفة red_marks مع نوعها (circle / tick / underline / strike / number / text / other) ورقم أقرب صف لها (row_hint يبدأ من 1) ولا تضعها أبداً كعملية داخل rows.
+   - الاثنان (٢) فتحتها لليمين فوق السطر، بينما الثلاثة (٣) لها سنّتان أو ثلاث أسنان في الأعلى.
+   - الأربعة (٤) لا تخلطها مع ٢ أو ٣. الستة (٦) والسبعة (٧) والثمانية (٨) والتسعة (٩) ميّز اتجاه رؤوسها بدقة.
 7. لا تخمّن أبداً رقماً غير واضح أو مطموس؛ اكتب القيمة الأقرب لما تراه وضع confidence منخفضة (أقل من 0.65).
-8. لا تضف صفوفاً غير موجودة في الصورة إطلاقاً، وتجاهل الأسطر الفارغة.
-9. الإجماليات المكتوبة بخط اليد أسفل كل جانب (أو المشطوبة والمصححة) ضعها في مصفوفة totals لكل جانب (مع وضع كل القيم المقروءة إن كان هناك شطب وتصحيح في candidates) وفي totals_row، ولا تعتبرها عملية داخل rows.`;
+8. الإجماليات المكتوبة بخط اليد أسفل كل جانب ضعها في مصفوفة totals لكل جانب وفي totals_row، ولا تعتبرها عملية داخل rows.`;
 
 const LEDGER_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -69,10 +70,30 @@ const LEDGER_RESPONSE_SCHEMA = {
       nullable: true,
       description: 'الرصيد الختامي المكتوب أسفل الورقة إن وجد أو null',
     },
+    book_opening_cash: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: 'رصيد الخزنة السابق المكتوب أعلى ورقة المبيعات (اليمين) إن وجد أو null',
+    },
+    book_closing_cash: {
+      type: Type.NUMBER,
+      nullable: true,
+      description: 'رصيد الخزنة الختامي المكتوب أسفل آخر ورقة مبيعات في اليوم إن وجد أو null',
+    },
     side: {
       type: Type.STRING,
       nullable: true,
       description: 'الجانب الظاهر في الورقة: buy أو sell أو both',
+    },
+    printed_header_side: {
+      type: Type.STRING,
+      nullable: true,
+      description: 'العنوان المطبوع المرصود أعلى الورقة: sell (المبيعات) أو buy (المشتريات) أو both أو null',
+    },
+    has_balance_column: {
+      type: Type.BOOLEAN,
+      nullable: true,
+      description: 'هل تحتوي الورقة على صف/عمود الرصيد السابق (علامة ورقة المبيعات)؟',
     },
     page_number_hint: {
       type: Type.STRING,
@@ -109,6 +130,36 @@ const LEDGER_RESPONSE_SCHEMA = {
             type: Type.NUMBER,
             description: 'إجمالي المبلغ',
           },
+          block_index: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'رقم الكتلة في الورقة: 1 للكتلة اليمنى، 2 للكتلة اليسرى',
+          },
+          line_in_block: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'رقم السطر المسطّر داخل الكتلة يبدأ من 1 من أعلى الكتلة',
+          },
+          line_no: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'رقم السطر في الورقة يبدأ من 1',
+          },
+          pieces: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'العدد الأحمر (داخل دائرة) المرتبط بهذا الصف ويمثل عدد القطع المباعة من الريون أو null',
+          },
+          pieces_confidence: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'درجة الثقة في قراءة عدد القطع الأحمر من 0 إلى 1',
+          },
+          source_hint: {
+            type: Type.STRING,
+            nullable: true,
+            description: 'الكلمة التي دلت على مصدر البيع إن وجدت في البيان مثل كيس أو علبة أو قديم أو من الكسر',
+          },
           running_balance_before: {
             type: Type.NUMBER,
             nullable: true,
@@ -119,10 +170,25 @@ const LEDGER_RESPONSE_SCHEMA = {
             nullable: true,
             description: 'الرصيد بعد العملية إن وجد في عمود الرصيد المتتابع أو null',
           },
+          book_running_cash: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'رصيد الخزنة الظاهر بعد الصف في ورقة المبيعات إن وجد أو null',
+          },
           y_ratio: {
             type: Type.NUMBER,
             nullable: true,
             description: 'الموضع الرأسي التقريبي للصف في الصفحة من 0.0 (أعلى) إلى 1.0 (أسفل)',
+          },
+          y_top: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'أعلى السطر كنسبة من ارتفاع الورقة (0..1)',
+          },
+          y_bottom: {
+            type: Type.NUMBER,
+            nullable: true,
+            description: 'أسفل السطر كنسبة من ارتفاع الورقة (0..1)',
           },
           confidence: {
             type: Type.NUMBER,
@@ -187,7 +253,7 @@ const LEDGER_RESPONSE_SCHEMA = {
     },
     red_marks: {
       type: Type.ARRAY,
-      description: 'علامات الحبر الأحمر (دوائر، صح، شطب، أرقام تصحيح، ملاحظات)',
+      description: 'علامات الحبر الأحمر (أعداد القطع داخل دوائر، صح، شطب، ملاحظات)',
       items: {
         type: Type.OBJECT,
         properties: {
@@ -210,6 +276,71 @@ const LEDGER_RESPONSE_SCHEMA = {
           },
         },
         required: ['type', 'text', 'confidence'],
+      },
+    },
+    red_other: {
+      type: Type.ARRAY,
+      nullable: true,
+      description: 'الأرقام أو الكتابات الحمراء التي لا ترتبط بصف معين (إجمالي، تصحيح، ملاحظة)',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          text: { type: Type.STRING },
+          numeric_value: { type: Type.NUMBER, nullable: true },
+          category: { type: Type.STRING, nullable: true },
+          location_hint: { type: Type.STRING, nullable: true },
+          confidence: { type: Type.NUMBER },
+        },
+        required: ['text', 'confidence'],
+      },
+    },
+    free_area_notes: {
+      type: Type.ARRAY,
+      nullable: true,
+      description: 'الحسابات والكتابات المكتوبة باليد (غالباً أحمر داخل دوائر) في المساحة الفاضية آخر اليوم خارج صفوف الجدول',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          text: { type: Type.STRING },
+          numeric_value: { type: Type.NUMBER, nullable: true },
+          suggested_category: {
+            type: Type.STRING,
+            nullable: true,
+            description: 'sum أو subtract أو balance أو note',
+          },
+          location_hint: { type: Type.STRING, nullable: true },
+          confidence: { type: Type.NUMBER },
+        },
+        required: ['text', 'confidence'],
+      },
+    },
+    cash_movement_suspects: {
+      type: Type.ARRAY,
+      nullable: true,
+      description: 'أي سطر في ورقة المبيعات يبدو حركة نقدية (كاش / مصروف / سلفة / دفعة شخص) وليس بيع ذهب',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          text: { type: Type.STRING },
+          amount: { type: Type.NUMBER },
+          block_index: { type: Type.NUMBER, nullable: true },
+          line_in_block: { type: Type.NUMBER, nullable: true },
+          confidence: { type: Type.NUMBER },
+        },
+        required: ['text', 'amount', 'confidence'],
+      },
+    },
+    bucket_weights: {
+      type: Type.OBJECT,
+      nullable: true,
+      description: 'أوزان الكيس/العلب أو الذهب القديم المكتوبة خارج صفوف العمليات إن وجدت (قبل/حالي)',
+      properties: {
+        bag_before_g: { type: Type.NUMBER, nullable: true },
+        bag_actual_g: { type: Type.NUMBER, nullable: true },
+        old_gold_before_g: { type: Type.NUMBER, nullable: true },
+        old_gold_actual_g: { type: Type.NUMBER, nullable: true },
+        rayon_pieces_before: { type: Type.NUMBER, nullable: true },
+        rayon_pieces_actual: { type: Type.NUMBER, nullable: true },
       },
     },
   },

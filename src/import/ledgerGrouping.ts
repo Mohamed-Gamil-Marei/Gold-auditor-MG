@@ -1,14 +1,19 @@
 import {
+  CashMovementSuspect,
+  FreeAreaNote,
   HandwrittenSideTotals,
   LedgerPageKind,
   LedgerPageRegion,
   LedgerPageSide,
   RedMarkItem,
   RedMarkType,
+  RedOtherItem,
+  SalesSourceBucket,
   SideTotalsComparison,
 } from '../types';
 import { addDaysLocalIso, getTodayIso } from '../utils/numerals';
 import { randomSuffix } from '../utils/ids';
+import { computeSheetRowSeq } from '../utils/sourceBuckets';
 
 export interface ExtractedLedgerRow {
   id: string;
@@ -20,7 +25,24 @@ export interface ExtractedLedgerRow {
   confidence: number;
   runningBalanceBefore?: number;
   runningBalanceAfter?: number;
+  // H9: Running safe cash from Sales sheet
+  bookRunningCash?: number;
+  // H-C & H5: Two-block structure & full SourceRef coordinates
+  blockIndex?: 1 | 2; // 1 = Right block (الكتلة اليمنى), 2 = Left block (الكتلة اليسرى)
+  lineInBlock?: number; // 1-based line inside the block
+  lineNo?: number;
+  seq?: number; // Sequential order in sheet: Block 1 top-to-bottom, then Block 2 top-to-bottom
   yRatio?: number;
+  yTop?: number;
+  yBottom?: number;
+  // H5 (البديل): Red circled number = number of pieces sold from Rayon
+  pieces?: number;
+  piecesConfidence?: number;
+  // H7 & H-B & H8: Sales source bucket
+  sourceBucket?: SalesSourceBucket;
+  sourceHint?: string;
+  sourceGuessed?: boolean;
+  multiSourceWarning?: boolean;
   pageId: string;
   pageNumber: number;
   rowOrderInPage: number;
@@ -51,7 +73,14 @@ export interface ScannedLedgerPage {
   dayGoldPrice: number | null;
   openingBalance: number | null;
   closingBalance: number | null;
+  // H9: Safe balance from Sales sheet
+  bookOpeningCash?: number | null;
+  bookClosingCash?: number | null;
   side: LedgerPageSide;
+  // H-A: Double confirmation of sheet side
+  printedHeaderSide?: LedgerPageSide | null;
+  hasBalanceColumn?: boolean | null;
+  layoutConsistencyWarning?: string | null;
   pageNumberHint: string | null;
   avgConfidence: number;
   rows: ExtractedLedgerRow[];
@@ -60,6 +89,21 @@ export interface ScannedLedgerPage {
     buy: HandwrittenSideTotals | null;
   };
   redMarks: RedMarkItem[];
+  // H5 (البديل): Unattached red numbers
+  redOther?: RedOtherItem[];
+  // H-C.3: Handwritten notes/calculations in the free space at the end of the day
+  freeAreaNotes?: FreeAreaNote[];
+  // H9.1: Non-sale cash movement suspects on the Sales sheet
+  cashMovementSuspects?: CashMovementSuspect[];
+  // H8.1: Bucket weights written outside rows
+  bucketWeights?: {
+    bagBeforeG?: number | null;
+    bagActualG?: number | null;
+    oldGoldBeforeG?: number | null;
+    oldGoldActualG?: number | null;
+    rayonPiecesBefore?: number | null;
+    rayonPiecesActual?: number | null;
+  };
   readStatus: 'unread' | 'queued' | 'reading' | 'done' | 'failed';
   importStatus: 'pending' | 'added' | 'rejected';
   errorMsg?: string;
@@ -85,6 +129,11 @@ export interface DiscoveredLedgerDay {
   goldPricePerGram: number;
   openingBalance: number | null;
   closingBalance: number | null;
+  bookOpeningCash?: number | null;
+  bookClosingCash?: number | null;
+  freeAreaNotes?: FreeAreaNote[];
+  cashMovementSuspects?: CashMovementSuspect[];
+  bucketWeights?: ScannedLedgerPage['bucketWeights'];
   pageIds: string[];
   pageNumbers: number[];
   isOrphanContinuation: boolean;
@@ -709,14 +758,28 @@ export function groupPagesIntoDays(
         ? manualOverride.goldPricePerGram
         : group.goldPricePerGram;
 
-    // Collect rows in page order and row order
+    // Collect rows in page order and H-C two-block seq order (Block 1 Right top-to-bottom, then Block 2 Left top-to-bottom)
     const allRows: ExtractedLedgerRow[] = [];
     let lastSellHandwritten: HandwrittenSideTotals | null = null;
     let lastBuyHandwritten: HandwrittenSideTotals | null = null;
     let closingBal = group.closingBalance;
+    let bookOpenCash: number | null = null;
+    let bookCloseCash: number | null = null;
+    const freeNotes: FreeAreaNote[] = [];
+    const cashSuspects: CashMovementSuspect[] = [];
+    let mergedBucketWeights: ScannedLedgerPage['bucketWeights'] = undefined;
 
     for (const p of group.pages) {
-      const sortedPageRows = [...p.rows].sort((a, b) => a.rowOrderInPage - b.rowOrderInPage);
+      const sortedPageRows = [...p.rows].sort((a, b) => {
+        const seqA =
+          a.seq ??
+          computeSheetRowSeq(a.blockIndex, a.lineInBlock ?? a.lineNo, 25, a.rowOrderInPage).seq;
+        const seqB =
+          b.seq ??
+          computeSheetRowSeq(b.blockIndex, b.lineInBlock ?? b.lineNo, 25, b.rowOrderInPage).seq;
+        if (seqA !== seqB) return seqA - seqB;
+        return a.rowOrderInPage - b.rowOrderInPage;
+      });
       allRows.push(...sortedPageRows);
       if (p.totalsBySide.sell && (p.totalsBySide.sell.handwritten_total_amount !== null || p.totalsBySide.sell.handwritten_total_weight_g !== null)) {
         lastSellHandwritten = p.totalsBySide.sell;
@@ -726,6 +789,21 @@ export function groupPagesIntoDays(
       }
       if (p.closingBalance !== null && p.closingBalance !== undefined) {
         closingBal = p.closingBalance;
+      }
+      if (bookOpenCash === null && typeof p.bookOpeningCash === 'number') {
+        bookOpenCash = p.bookOpeningCash;
+      }
+      if (typeof p.bookClosingCash === 'number') {
+        bookCloseCash = p.bookClosingCash;
+      }
+      if (Array.isArray(p.freeAreaNotes) && p.freeAreaNotes.length > 0) {
+        freeNotes.push(...p.freeAreaNotes);
+      }
+      if (Array.isArray(p.cashMovementSuspects) && p.cashMovementSuspects.length > 0) {
+        cashSuspects.push(...p.cashMovementSuspects);
+      }
+      if (p.bucketWeights) {
+        mergedBucketWeights = { ...(mergedBucketWeights || {}), ...p.bucketWeights };
       }
     }
 
@@ -764,6 +842,11 @@ export function groupPagesIntoDays(
       goldPricePerGram: effectiveGoldPrice,
       openingBalance: group.openingBalance,
       closingBalance: closingBal,
+      bookOpeningCash: bookOpenCash ?? group.openingBalance,
+      bookClosingCash: bookCloseCash ?? closingBal,
+      freeAreaNotes: freeNotes,
+      cashMovementSuspects: cashSuspects,
+      bucketWeights: mergedBucketWeights,
       pageIds: group.pages.map((p) => p.id),
       pageNumbers: group.pages.map((p) => p.pageNumber),
       isOrphanContinuation: isStillOrphan,

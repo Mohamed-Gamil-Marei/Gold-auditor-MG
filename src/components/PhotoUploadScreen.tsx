@@ -48,6 +48,10 @@ import {
   RedMarkItem,
   HandwrittenSideTotals,
   DayLedgerPageMeta,
+  SalesSourceBucket,
+  FreeAreaNote,
+  RedOtherItem,
+  CashMovementSuspect,
 } from '../types';
 import {
   ScannedLedgerPage,
@@ -63,6 +67,18 @@ import {
   hasDiscrepantRedNumber,
   classifyLedgerPageKind,
 } from '../import/ledgerGrouping';
+import {
+  classifySourceBucket,
+  computeSheetRowSeq,
+  formatSourceRef,
+  verifyLedgerSheetSideConsistency,
+  extractRowPiecesFromRedMarks,
+  normalizeFreeAreaNotes,
+  normalizeRedOtherItems,
+  recordManualSourceBucketOverride,
+  getSuggestedBucketKeywords,
+  SOURCE_BUCKET_LABELS,
+} from '../utils/sourceBuckets';
 import {
   computeImageHash,
   preprocessLedgerImage,
@@ -129,10 +145,10 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
     });
   }, []);
 
-  // Pre-processing & OCR controls (H2, P2, P4)
-  const [cropMode, setCropMode] = useState<'both_split' | 'right_sell' | 'left_buy' | 'full'>(
-    'both_split'
-  );
+  // Pre-processing & OCR controls (H2, H-C, H-A, P2, P4)
+  const [cropMode, setCropMode] = useState<
+    'both_split' | 'two_blocks_per_sheet' | 'right_sell' | 'left_buy' | 'full'
+  >('both_split');
   const [sliceHorizontally, setSliceHorizontally] = useState<boolean>(false);
   const [readTwiceAndCompare, setReadTwiceAndCompare] = useState<boolean>(false);
   const [attachImageToDay, setAttachImageToDay] = useState<boolean>(true);
@@ -141,7 +157,7 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
   >('standard');
   const [showRegionEditor, setShowRegionEditor] = useState<boolean>(false);
   const [customRegions, setCustomRegions] = useState<LedgerPageRegion[]>(() =>
-    getDefaultLedgerRegions('both_split')
+    getDefaultLedgerRegions('both_split', settings.reverseLedgerSheetLayout)
   );
 
   // P2 A/B comparison banner
@@ -157,10 +173,20 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
   );
   const [showDictionaryModal, setShowDictionaryModal] = useState<boolean>(false);
 
-  // H5 Red mark filter in preview table
+  // H5, H-C, H7 filters in preview table
   const [redMarkFilter, setRedMarkFilter] = useState<
-    'all' | 'has_mark' | 'no_mark' | 'discrepant_red_number'
+    | 'all'
+    | 'has_mark'
+    | 'no_mark'
+    | 'discrepant_red_number'
+    | 'missing_pieces'
+    | 'no_source'
   >('all');
+  const [blockFilter, setBlockFilter] = useState<'all' | 1 | 2>('all');
+  const [suggestedKeywordBanner, setSuggestedKeywordBanner] = useState<{
+    phrase: string;
+    bucket: SalesSourceBucket;
+  } | null>(null);
 
   // H3 Suspect rows modal ("أين الفرق؟")
   const [suspectModalInfo, setSuspectModalInfo] = useState<{
@@ -266,19 +292,24 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
     rawImageDataUrl: imageDataUrl,
     imageHash: computeImageHash(imageDataUrl),
     rotationDeg: 0,
-    regions: getDefaultLedgerRegions(cropMode),
+    regions: getDefaultLedgerRegions(cropMode, settings.reverseLedgerSheetLayout),
     kind: 'day_start',
     detectedDate: defaultDate,
     weekday: null,
     dayGoldPrice: findSuggestedGoldPrice(defaultDate, daysMap),
     openingBalance: null,
     closingBalance: null,
+    bookOpeningCash: null,
+    bookClosingCash: null,
     side: 'both',
     pageNumberHint: null,
     avgConfidence: 0.85,
     rows: [],
     totalsBySide: { sell: null, buy: null },
     redMarks: [],
+    redOther: [],
+    freeAreaNotes: [],
+    cashMovementSuspects: [],
     readStatus: 'unread',
     importStatus: 'pending',
   });
@@ -427,7 +458,7 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
     const jobs: RegionJob[] = [];
     const activeRegions = showRegionEditor
       ? customRegions
-      : getDefaultLedgerRegions(cropMode);
+      : getDefaultLedgerRegions(cropMode, settings.reverseLedgerSheetLayout);
 
     for (const reg of activeRegions) {
       const forcedSide = reg.side === 'buy' || reg.side === 'sell' ? reg.side : undefined;
@@ -462,12 +493,21 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
       let detectedGoldPrice: number | null = null;
       let openingBal: number | null = null;
       let closingBal: number | null = null;
+      let bookOpeningCash: number | null = null;
+      let bookClosingCash: number | null = null;
+      let printedHeaderSide: 'sell' | 'buy' | 'both' | null = null;
+      let hasBalanceColumn: boolean | null = null;
+      let layoutConsistencyWarning: string | null = null;
       let pageNumHint: string | null = null;
       let pageConfSum = 0;
       let pageConfCount = 0;
       let sellTotals: HandwrittenSideTotals | null = null;
       let buyTotals: HandwrittenSideTotals | null = null;
       const allRedMarks: RedMarkItem[] = [];
+      const allRedOther: RedOtherItem[] = [];
+      const allFreeAreaNotes: FreeAreaNote[] = [];
+      const allCashSuspects: CashMovementSuspect[] = [];
+      let bucketWeights: ScannedLedgerPage['bucketWeights'] = undefined;
 
       for (let i = 0; i < jobs.length; i++) {
         const job = jobs[i];
@@ -486,7 +526,7 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
           },
         });
 
-        const cacheKey = `${prep.imageHash}|${cropMode}|${sliceHorizontally}|${job.forcedSide || 'auto'}|${job.vSlice || 'full'}|${activePreset}`;
+        const cacheKey = `${prep.imageHash}|${cropMode}|${sliceHorizontally}|${job.forcedSide || 'auto'}|${job.region.blockIndex || 0}|${job.vSlice || 'full'}|${activePreset}`;
         let result = await getCachedPageOcrResult(cacheKey);
         if (!result) {
           result = await callOcrWithRetry({
@@ -513,6 +553,35 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
         }
         if (typeof result.closing_balance === 'number' && closingBal === null) {
           closingBal = result.closing_balance;
+        }
+        if (typeof result.book_opening_cash === 'number' && bookOpeningCash === null) {
+          bookOpeningCash = result.book_opening_cash;
+        }
+        if (typeof result.book_closing_cash === 'number' && bookClosingCash === null) {
+          bookClosingCash = result.book_closing_cash;
+        }
+        if (
+          (result.printed_header_side === 'sell' || result.printed_header_side === 'buy') &&
+          !printedHeaderSide
+        ) {
+          printedHeaderSide = result.printed_header_side;
+        }
+        if (typeof result.has_balance_column === 'boolean' && hasBalanceColumn === null) {
+          hasBalanceColumn = result.has_balance_column;
+        }
+        if (job.forcedSide) {
+          const checkSide = verifyLedgerSheetSideConsistency({
+            positionSide: job.forcedSide,
+            printedHeaderSide:
+              result.printed_header_side === 'sell' || result.printed_header_side === 'buy'
+                ? result.printed_header_side
+                : null,
+            hasBalanceColumnOrRow: result.has_balance_column,
+            reverseLayout: settings.reverseLedgerSheetLayout,
+          });
+          if (!checkSide.consistent && checkSide.warningMessage) {
+            layoutConsistencyWarning = checkSide.warningMessage;
+          }
         }
         if (result.page_number_hint && !pageNumHint) {
           pageNumHint = String(result.page_number_hint);
@@ -561,12 +630,74 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
           }
         }
 
-        // H5: Normalize red marks
+        // H5: Normalize red marks & red_other
         if (Array.isArray(result.red_marks)) {
           allRedMarks.push(...normalizeRedMarks(result.red_marks));
         }
+        if (Array.isArray(result.red_other)) {
+          allRedOther.push(...normalizeRedOtherItems(result.red_other));
+        }
+        // H-C.3: Free area notes
+        if (Array.isArray(result.free_area_notes)) {
+          allFreeAreaNotes.push(...normalizeFreeAreaNotes(result.free_area_notes));
+        }
+        // H9: Cash movement suspects
+        if (Array.isArray(result.cash_movement_suspects)) {
+          result.cash_movement_suspects.forEach((s: any, sIdx: number) => {
+            const amt = Number(s?.amount) || 0;
+            if (amt > 0) {
+              allCashSuspects.push({
+                id: `cms-${pageObj.pageNumber}-${sIdx}-${randomSuffix(3)}`,
+                text: String(s?.raw_text || s?.rawText || s?.text || ''),
+                amount: amt,
+                pageNumber: pageObj.pageNumber,
+                confidence: typeof s?.confidence === 'number' ? s.confidence : 0.8,
+                classification: 'unclassified',
+              });
+            }
+          });
+        }
+        // H8: Bucket weights written at bottom of day
+        if (result.bucket_weights && typeof result.bucket_weights === 'object') {
+          const prevBw: NonNullable<ScannedLedgerPage['bucketWeights']> = bucketWeights || {};
+          bucketWeights = {
+            bagBeforeG:
+              typeof result.bucket_weights.bag_before_g === 'number'
+                ? result.bucket_weights.bag_before_g
+                : prevBw.bagBeforeG ?? null,
+            bagActualG:
+              typeof result.bucket_weights.bag_actual_g === 'number'
+                ? result.bucket_weights.bag_actual_g
+                : typeof result.bucket_weights.bag_weight_g === 'number'
+                ? result.bucket_weights.bag_weight_g
+                : prevBw.bagActualG ?? null,
+            oldGoldBeforeG:
+              typeof result.bucket_weights.old_gold_before_g === 'number'
+                ? result.bucket_weights.old_gold_before_g
+                : prevBw.oldGoldBeforeG ?? null,
+            oldGoldActualG:
+              typeof result.bucket_weights.old_gold_actual_g === 'number'
+                ? result.bucket_weights.old_gold_actual_g
+                : typeof result.bucket_weights.old_gold_weight_g === 'number'
+                ? result.bucket_weights.old_gold_weight_g
+                : prevBw.oldGoldActualG ?? null,
+            rayonPiecesBefore:
+              typeof result.bucket_weights.rayon_pieces_before === 'number'
+                ? result.bucket_weights.rayon_pieces_before
+                : prevBw.rayonPiecesBefore ?? null,
+            rayonPiecesActual:
+              typeof result.bucket_weights.rayon_pieces_actual === 'number'
+                ? result.bucket_weights.rayon_pieces_actual
+                : typeof result.bucket_weights.rayon_pieces === 'number'
+                ? result.bucket_weights.rayon_pieces
+                : prevBw.rayonPiecesActual ?? null,
+          };
+        }
 
-        // Rows + P3 dictionary application
+        // Track line counters per side & blockIndex (H-C)
+        const blockLineCounters: Record<string, number> = {};
+
+        // Rows + P3 dictionary application + H-C blockIndex + H5 pieces + H7 sourceBucket
         if (Array.isArray(result.rows)) {
           result.rows.forEach((r: any, rIdx: number) => {
             const g = Number(r.weight_g) || 0;
@@ -585,6 +716,40 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                 ? applyDictionaryToItemName(rawItem, dictionary)
                 : rawItem;
 
+            const blockIndex: 1 | 2 =
+              job.region.blockIndex ||
+              (r.block_index === 2 ? 2 : 1);
+            const counterKey = `${rowType}_${blockIndex}`;
+            blockLineCounters[counterKey] = (blockLineCounters[counterKey] || 0) + 1;
+            const lineInBlock =
+              typeof r.line_in_block === 'number' && r.line_in_block > 0
+                ? Math.round(r.line_in_block)
+                : blockLineCounters[counterKey];
+            const { seq } = computeSheetRowSeq(blockIndex, lineInBlock);
+
+            const ocrPieces =
+              typeof r.pieces === 'number' && r.pieces > 0
+                ? Math.round(r.pieces)
+                : undefined;
+            const ocrPiecesConf =
+              typeof r.pieces_confidence === 'number' ? r.pieces_confidence : undefined;
+
+            const rawSourceHint =
+              r.source_hint === 'rayon' ||
+              r.source_hint === 'bag' ||
+              r.source_hint === 'old_gold'
+                ? r.source_hint
+                : undefined;
+
+            const bucketClass =
+              rowType === 'sell'
+                ? classifySourceBucket(
+                    normalizedItem,
+                    settings,
+                    rawSourceHint ? String(rawSourceHint) : undefined
+                  )
+                : null;
+
             rawRows.push({
               id: `ocr-p${pageIdx}-${Date.now()}-${rawRows.length}-${randomSuffix(3)}`,
               approved: true,
@@ -601,6 +766,19 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                 typeof r.running_balance_after === 'number'
                   ? r.running_balance_after
                   : undefined,
+              bookRunningCash:
+                typeof r.book_running_cash === 'number'
+                  ? r.book_running_cash
+                  : undefined,
+              blockIndex,
+              lineInBlock,
+              seq,
+              pieces: rowType === 'sell' ? ocrPieces : undefined,
+              piecesConfidence: ocrPiecesConf,
+              sourceHint: rawSourceHint ?? undefined,
+              sourceBucket: bucketClass ? bucketClass.bucket : undefined,
+              sourceGuessed: bucketClass ? bucketClass.isGuessed : undefined,
+              multiSourceWarning: bucketClass ? bucketClass.multiSourceWarning : undefined,
               yRatio:
                 typeof r.y_ratio === 'number'
                   ? r.y_ratio
@@ -628,7 +806,31 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
         dedupedRows.push(candidate);
       }
 
-      const linkedRows = attachRedMarksToRows(dedupedRows, allRedMarks);
+      // Attach red marks and extract piece counts from red circles if not already populated (H5)
+      const linkedRows = attachRedMarksToRows(dedupedRows, allRedMarks).map((row) => {
+        if (row.type === 'sell' && !row.pieces && row.bookMarks && row.bookMarks.length > 0) {
+          const extPieces = extractRowPiecesFromRedMarks(null, row.bookMarks);
+          if (extPieces) {
+            return {
+              ...row,
+              pieces: extPieces,
+              piecesConfidence: 0.9,
+            };
+          }
+        }
+        return row;
+      });
+
+      // H-C.1: Sort rows by side, blockIndex (1 then 2), and lineInBlock
+      linkedRows.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'sell' ? -1 : 1;
+        const seqA =
+          a.seq ?? computeSheetRowSeq(a.blockIndex || 1, a.lineInBlock || a.rowOrderInPage).seq;
+        const seqB =
+          b.seq ?? computeSheetRowSeq(b.blockIndex || 1, b.lineInBlock || b.rowOrderInPage).seq;
+        return seqA - seqB;
+      });
+
       const inferredKind = classifyLedgerPageKind(firstRawOcr, linkedRows.length);
 
       return {
@@ -638,6 +840,11 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
         detectedGoldPrice,
         openingBal,
         closingBal,
+        bookOpeningCash,
+        bookClosingCash,
+        printedHeaderSide,
+        hasBalanceColumn,
+        layoutConsistencyWarning,
         pageNumHint,
         avgPageConf:
           pageConfCount > 0
@@ -648,6 +855,10 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
         sellTotals,
         buyTotals,
         allRedMarks,
+        allRedOther,
+        allFreeAreaNotes,
+        allCashSuspects,
+        bucketWeights,
         rows: linkedRows,
       };
     };
@@ -718,6 +929,11 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
           : pageObj.dayGoldPrice,
       openingBalance: pass1.openingBal,
       closingBalance: pass1.closingBal,
+      bookOpeningCash: pass1.bookOpeningCash ?? pass1.openingBal,
+      bookClosingCash: pass1.bookClosingCash ?? pass1.closingBal,
+      printedHeaderSide: pass1.printedHeaderSide,
+      hasBalanceColumn: pass1.hasBalanceColumn,
+      layoutConsistencyWarning: pass1.layoutConsistencyWarning,
       pageNumberHint: pass1.pageNumHint,
       avgConfidence: pass1.avgPageConf,
       rows: finalRows,
@@ -726,6 +942,10 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
         buy: pass1.buyTotals,
       },
       redMarks: pass1.allRedMarks,
+      redOther: pass1.allRedOther,
+      freeAreaNotes: pass1.allFreeAreaNotes,
+      cashMovementSuspects: pass1.allCashSuspects,
+      bucketWeights: pass1.bucketWeights,
     };
 
     updatePageAt(pageIdx, () => updatedPage);
@@ -1065,9 +1285,14 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
       const effectivePrice =
         day.goldPricePerGram || findSuggestedGoldPrice(day.date, daysMap);
 
+      const batchId = `batch-${Date.now()}-${randomSuffix(3)}`;
       const batchRes = addOperationsBatch(
         approvedRows.map((r) => {
           const dayPageIdx = day.pageIds.indexOf(r.pageId);
+          const sheetIndexInDay = dayPageIdx >= 0 ? dayPageIdx + 1 : 1;
+          const blockIdx: 1 | 2 = r.blockIndex === 2 ? 2 : 1;
+          const lineInBlk = r.lineInBlock || r.rowOrderInPage;
+          const seq = r.seq ?? computeSheetRowSeq(blockIdx, lineInBlk).seq;
           return {
             date: day.date,
             kind: r.type,
@@ -1078,14 +1303,30 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
             payment: 'cash',
             runningBalanceBefore: r.runningBalanceBefore,
             runningBalanceAfter: r.runningBalanceAfter,
-            rowOrderInPage: r.rowOrderInPage,
+            bookRunningCash: r.bookRunningCash ?? r.runningBalanceAfter,
+            rowOrderInPage: seq,
             ocrConfidence: r.confidence,
+            pieces: r.type === 'sell' && r.pieces ? r.pieces : undefined,
+            piecesConfidence: r.piecesConfidence,
+            sourceBucket: r.type === 'sell' ? r.sourceBucket || 'rayon' : undefined,
+            sourceHint: r.sourceHint ?? undefined,
+            sourceGuessed: r.sourceGuessed,
+            multiSourceWarning: r.multiSourceWarning,
             bookMarks: r.bookMarks,
             sourcePageRef: {
-              pageIndex: dayPageIdx >= 0 ? dayPageIdx + 1 : 1,
-              pageImageKey: `${day.date}__p${dayPageIdx >= 0 ? dayPageIdx + 1 : 1}`,
-              rowYRatio: r.yRatio,
+              pdfPage: r.pageNumber,
+              fileName,
+              importBatchId: batchId,
+              pageIndex: sheetIndexInDay,
+              sheetIndexInDay,
+              sheetSide: r.type,
               side: r.type,
+              blockIndex: blockIdx,
+              lineInBlock: lineInBlk,
+              lineNo: r.rowOrderInPage,
+              seq,
+              pageImageKey: `${day.date}__p${sheetIndexInDay}`,
+              rowYRatio: r.yRatio,
             },
           };
         }),
@@ -1100,7 +1341,7 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
 
       totalAddedRows += batchRes.addedCount;
 
-      // Save DayInfo metadata (H1, H3, H4, P5)
+      // Save DayInfo metadata (H1, H3, H4, H8, H9, H-C, P5)
       const ledgerPagesMeta: DayLedgerPageMeta[] = [];
       for (let i = 0; i < day.pageIds.length; i++) {
         const pid = day.pageIds[i];
@@ -1138,9 +1379,41 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
         });
       }
 
+      const existingDay = daysMap[day.date];
+      const existingBuckets = existingDay?.bucketReconciliation;
+      const bw = day.bucketWeights;
+
       updateDayInfo(day.date, {
         openingLedgerBalance: day.openingBalance ?? undefined,
         closingLedgerBalance: day.closingBalance ?? undefined,
+        bookOpeningCash: day.bookOpeningCash ?? day.openingBalance ?? undefined,
+        bookClosingCash: day.bookClosingCash ?? day.closingBalance ?? undefined,
+        freeAreaNotes:
+          day.freeAreaNotes && day.freeAreaNotes.length > 0 ? day.freeAreaNotes : undefined,
+        bucketReconciliation: bw
+          ? {
+              rayon: {
+                beforeG: existingBuckets?.rayon?.beforeG,
+                manualInflowG: existingBuckets?.rayon?.manualInflowG ?? 0,
+                actualG: existingBuckets?.rayon?.actualG,
+                piecesBefore:
+                  bw.rayonPiecesBefore ?? existingBuckets?.rayon?.piecesBefore,
+                piecesInflow: existingBuckets?.rayon?.piecesInflow ?? 0,
+                piecesActual:
+                  bw.rayonPiecesActual ?? existingBuckets?.rayon?.piecesActual,
+              },
+              bag: {
+                beforeG: bw.bagBeforeG ?? existingBuckets?.bag?.beforeG,
+                manualInflowG: existingBuckets?.bag?.manualInflowG ?? 0,
+                actualG: bw.bagActualG ?? existingBuckets?.bag?.actualG,
+              },
+              old_gold: {
+                beforeG: bw.oldGoldBeforeG ?? existingBuckets?.old_gold?.beforeG,
+                manualInflowG: existingBuckets?.old_gold?.manualInflowG ?? 0,
+                actualG: bw.oldGoldActualG ?? existingBuckets?.old_gold?.actualG,
+              },
+            }
+          : existingBuckets,
         ledgerPages: ledgerPagesMeta,
         ledgerTotalsComparison: {
           sell: day.totalsMatch.sell,
@@ -1165,22 +1438,35 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
     onAddedSuccess();
   };
 
-  // Filtered rows for current page in Reader tab (H5 filter)
+  // Filtered rows for current page in Reader tab (H5, H-C, H7 filters)
   const filteredCurrentPageRows = useMemo(() => {
     if (!currentPage) return [];
     return currentPage.rows.filter((r) => {
+      if (blockFilter !== 'all' && (r.blockIndex || 1) !== blockFilter) {
+        return false;
+      }
       if (redMarkFilter === 'has_mark') {
-        return Boolean(r.bookMarks && r.bookMarks.length > 0);
+        return Boolean((r.bookMarks && r.bookMarks.length > 0) || (r.pieces && r.pieces > 0));
       }
       if (redMarkFilter === 'no_mark') {
-        return !r.bookMarks || r.bookMarks.length === 0;
+        return (!r.bookMarks || r.bookMarks.length === 0) && (!r.pieces || r.pieces <= 0);
       }
       if (redMarkFilter === 'discrepant_red_number') {
         return hasDiscrepantRedNumber(r).hasDiff;
       }
+      if (redMarkFilter === 'missing_pieces') {
+        return (
+          r.type === 'sell' &&
+          (r.sourceBucket || 'rayon') === 'rayon' &&
+          (!r.pieces || r.pieces <= 0)
+        );
+      }
+      if (redMarkFilter === 'no_source') {
+        return r.type === 'sell' && Boolean(r.sourceGuessed || r.multiSourceWarning);
+      }
       return true;
     });
-  }, [currentPage, redMarkFilter]);
+  }, [currentPage, redMarkFilter, blockFilter]);
 
   // Export Import Quality Report (H6.7)
   const handleExportImportQualityReport = async () => {
@@ -1346,6 +1632,27 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                   <BookOpen className="w-3.5 h-3.5 text-amber-600" />
                   <span>قاموس التصحيحات ({dictionary.items.length})</span>
                 </button>
+              </div>
+            </div>
+
+            {/* بطاقة تعريف الدفتر (Ledger Definition Card Summary Banner) */}
+            <div className="bg-amber-50/70 border border-amber-200 rounded-xl px-3.5 py-2.5 text-[11px] text-slate-800 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-extrabold text-amber-900">
+                  📋 بطاقة تعريف الدفتر:
+                </span>
+                <span>
+                  • <strong>اليمين:</strong> مبيعات (بيع) | <strong>اليسار:</strong> مشتريات (شراء)
+                </span>
+                <span>
+                  • <strong>كل ورقة:</strong> كتلتان متجاورتان (تُقرأ اليمنى 1 ثم اليسرى 2 — H-C)
+                </span>
+                <span className="text-rose-800 font-bold">
+                  • ⭕ الأرقام الحمراء = عدد القطع المباعة من الريون (H5)
+                </span>
+                <span>
+                  • <strong>مصادر البيع (H7):</strong> الريون · الكيس/العلب · الذهب القديم
+                </span>
               </div>
             </div>
 
@@ -1558,7 +1865,8 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                       <Scissors className="w-3.5 h-3.5 text-slate-500 mx-1" />
                       {(
                         [
-                          { id: 'both_split', label: 'النصفين (بيع + شراء)' },
+                          { id: 'both_split', label: 'الورقتان (بيع يمين + شراء يسار)' },
+                          { id: 'two_blocks_per_sheet', label: 'الورقتان × كتلتين (H-C)' },
                           { id: 'right_sell', label: 'المبيعات (الأيمن)' },
                           { id: 'left_buy', label: 'المشتريات (الأيسر)' },
                           { id: 'full', label: 'الصفحة كاملة' },
@@ -1569,7 +1877,9 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                           type="button"
                           onClick={() => {
                             setCropMode(m.id);
-                            setCustomRegions(getDefaultLedgerRegions(m.id));
+                            setCustomRegions(
+                              getDefaultLedgerRegions(m.id, settings.reverseLedgerSheetLayout)
+                            );
                           }}
                           className={`px-2 py-1 rounded font-semibold transition-colors ${
                             cropMode === m.id
@@ -1910,42 +2220,46 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
 
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-0.5">
-                          رصيد أول الصفحة (H4)
+                          رصيد أول الخزنة بالدفتر (H9)
                         </label>
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={currentPage.openingBalance ?? ''}
+                          value={currentPage.bookOpeningCash ?? currentPage.openingBalance ?? ''}
                           placeholder="اختياري..."
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const val = e.target.value
+                              ? parseAmountInput(e.target.value)
+                              : null;
                             updatePageAt(selectedPageIdx, (p) => ({
                               ...p,
-                              openingBalance: e.target.value
-                                ? parseAmountInput(e.target.value)
-                                : null,
-                            }))
-                          }
+                              openingBalance: val,
+                              bookOpeningCash: val,
+                            }));
+                          }}
                           className="w-24 px-2 py-1 text-xs font-mono border border-slate-300 rounded"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-0.5">
-                          رصيد آخر الصفحة (H4)
+                          رصيد آخر الخزنة بالدفتر (H9)
                         </label>
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={currentPage.closingBalance ?? ''}
+                          value={currentPage.bookClosingCash ?? currentPage.closingBalance ?? ''}
                           placeholder="اختياري..."
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const val = e.target.value
+                              ? parseAmountInput(e.target.value)
+                              : null;
                             updatePageAt(selectedPageIdx, (p) => ({
                               ...p,
-                              closingBalance: e.target.value
-                                ? parseAmountInput(e.target.value)
-                                : null,
-                            }))
-                          }
+                              closingBalance: val,
+                              bookClosingCash: val,
+                            }));
+                          }}
                           className="w-24 px-2 py-1 text-xs font-mono border border-slate-300 rounded"
                         />
                       </div>
@@ -1984,10 +2298,90 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                     )}
                   </div>
 
-                  {/* H5 Red Ink Marks Filter & Summary Bar */}
+                  {/* H-A: Layout Consistency Warning Banner */}
+                  {currentPage.layoutConsistencyWarning && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-950 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-bold">
+                        <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+                        <span>{currentPage.layoutConsistencyWarning}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updatePageAt(selectedPageIdx, (p) => ({
+                              ...p,
+                              layoutConsistencyWarning: null,
+                              rows: p.rows.map((r) => ({
+                                ...r,
+                                type: r.type === 'sell' ? 'buy' : 'sell',
+                              })),
+                            }))
+                          }
+                          className="px-2.5 py-1 bg-amber-700 text-white rounded font-bold text-[11px]"
+                        >
+                          قلب جهة الورقة (بيع ↔ شراء)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updatePageAt(selectedPageIdx, (p) => ({
+                              ...p,
+                              rotationDeg: (((p.rotationDeg + 180) % 360) as 0 | 90 | 180 | 270) || 0,
+                              layoutConsistencyWarning: null,
+                            }))
+                          }
+                          className="px-2.5 py-1 bg-slate-800 text-white rounded font-bold text-[11px]"
+                        >
+                          تدوير 180°
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* H-B.6 Self-learned Source Keyword Banner */}
+                  {suggestedKeywordBanner && (
+                    <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-950 flex items-center justify-between gap-2">
+                      <span>
+                        💡 لاحظ البرنامج تكرار تصنيف كلمة{' '}
+                        <strong className="underline">"{suggestedKeywordBanner.phrase}"</strong> ضمن{' '}
+                        <strong>{SOURCE_BUCKET_LABELS[suggestedKeywordBanner.bucket]}</strong> (H-B.6).
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSuggestedKeywordBanner(null)}
+                        className="text-[11px] font-bold text-indigo-800 hover:underline"
+                      >
+                        حسناً
+                      </button>
+                    </div>
+                  )}
+
+                  {/* H-C Block Filter + H5 Red Pieces & H7 Source Filter Bar */}
                   <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-700">تصفية علامات القلم الأحمر (H5):</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-slate-700">تصفية الكتلة (H-C):</span>
+                      <select
+                        value={blockFilter}
+                        onChange={(e) =>
+                          setBlockFilter(
+                            e.target.value === 'all' ? 'all' : (Number(e.target.value) as 1 | 2)
+                          )
+                        }
+                        className="px-2 py-1 bg-white border border-slate-300 rounded font-bold text-slate-800"
+                      >
+                        <option value="all">الكتلتان معاً ({currentPage.rows.length})</option>
+                        <option value={1}>
+                          الكتلة اليمنى (1) (
+                          {currentPage.rows.filter((r) => (r.blockIndex || 1) === 1).length})
+                        </option>
+                        <option value={2}>
+                          الكتلة اليسرى (2) (
+                          {currentPage.rows.filter((r) => r.blockIndex === 2).length})
+                        </option>
+                      </select>
+
+                      <span className="font-bold text-slate-700 mr-2">تصفية القطع والمصدر (H5/H7):</span>
                       <select
                         value={redMarkFilter}
                         onChange={(e) => setRedMarkFilter(e.target.value as any)}
@@ -1995,46 +2389,55 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                       >
                         <option value="all">كل الصفوف ({currentPage.rows.length})</option>
                         <option value="has_mark">
-                          عليها علامة في الدفتر (
+                          فيها عدد قطع أحمر / علامة (
                           {
-                            currentPage.rows.filter((r) => r.bookMarks && r.bookMarks.length > 0)
-                              .length
+                            currentPage.rows.filter(
+                              (r) =>
+                                (r.bookMarks && r.bookMarks.length > 0) ||
+                                (r.pieces && r.pieces > 0)
+                            ).length
                           }
                           )
                         </option>
-                        <option value="no_mark">
-                          بلا علامة في الدفتر (
+                        <option value="missing_pieces">
+                          مبيعات ريون بلا عدد قطع أحمر (
                           {
                             currentPage.rows.filter(
-                              (r) => !r.bookMarks || r.bookMarks.length === 0
+                              (r) =>
+                                r.type === 'sell' &&
+                                (r.sourceBucket || 'rayon') === 'rayon' &&
+                                (!r.pieces || r.pieces <= 0)
+                            ).length
+                          }
+                          )
+                        </option>
+                        <option value="no_source">
+                          مبيعات بمصدر مُخمَّن أو مزدوج (
+                          {
+                            currentPage.rows.filter(
+                              (r) => r.type === 'sell' && (r.sourceGuessed || r.multiSourceWarning)
                             ).length
                           }
                           )
                         </option>
                         <option value="discrepant_red_number">
-                          فيها رقم أحمر مخالف لرقم الصف (
+                          فيها رقم أحمر تصحيحي (
                           {currentPage.rows.filter((r) => hasDiscrepantRedNumber(r).hasDiff).length}
                           )
                         </option>
                       </select>
                     </div>
 
-                    {currentPage.redMarks.some((m) => m.type === 'circle') && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const count = convertRedCirclesToReviewedFlag(
-                            currentPage.detectedDate || undefined
-                          );
-                          setSuccessBanner(
-                            `تم تحويل علامة الدائرة الحمراء إلى علامة مراجعة لعدد ${count} عملية مسجلة.`
-                          );
-                        }}
-                        className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-900 rounded font-bold"
-                      >
-                        ⭕ حوّل الدائرة الحمراء إلى علامة مراجعة
-                      </button>
-                    )}
+                    <div className="text-[11px] font-bold text-rose-800">
+                      إجمالي قطع الريون الحمراء بالصفحة:{' '}
+                      <span className="font-mono text-sm">
+                        {currentPage.rows.reduce(
+                          (s, r) => s + (r.type === 'sell' && r.pieces && r.pieces > 0 ? r.pieces : 0),
+                          0
+                        )}
+                      </span>{' '}
+                      قطعة
+                    </div>
                   </div>
 
                   {/* Editable Rows Table */}
@@ -2042,15 +2445,19 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                     <table className="w-full text-right border-collapse text-xs">
                       <thead>
                         <tr className="bg-slate-100 border-b border-slate-200 font-bold text-slate-600">
-                          <th className="py-2 px-1.5 w-8 text-center">✓</th>
-                          <th className="py-2 px-1.5 w-16">النوع</th>
+                          <th className="py-2 px-1 w-7 text-center">✓</th>
+                          <th className="py-2 px-1.5 w-28">المرجع (H-C)</th>
+                          <th className="py-2 px-1 w-14">النوع</th>
                           <th className="py-2 px-2">البيان</th>
-                          <th className="py-2 px-1.5 w-24">الوزن (ج)</th>
-                          <th className="py-2 px-1.5 w-28">الإجمالي</th>
-                          <th className="py-2 px-1.5 w-24">الرصيد بعد (H4)</th>
-                          <th className="py-2 px-1.5 w-28">علامات الدفتر (H5)</th>
-                          <th className="py-2 px-1.5 w-14 text-center">الثقة</th>
-                          <th className="py-2 px-1 w-8"></th>
+                          <th className="py-2 px-1 w-16 text-center text-rose-800">
+                            ⭕ القطع (H5)
+                          </th>
+                          <th className="py-2 px-1.5 w-24">المصدر (H7)</th>
+                          <th className="py-2 px-1.5 w-20">الوزن (ج)</th>
+                          <th className="py-2 px-1.5 w-24">الإجمالي</th>
+                          <th className="py-2 px-1.5 w-20">الرصيد بعد</th>
+                          <th className="py-2 px-1 w-12 text-center">الثقة</th>
+                          <th className="py-2 px-1 w-7"></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2082,9 +2489,21 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                                 )
                               : null;
 
+                          const rowRefLabel = formatSourceRef(
+                            {
+                              pageIndex: 1,
+                              sheetSide: r.type,
+                              sheetIndexInDay: 1,
+                              blockIndex: r.blockIndex || 1,
+                              lineInBlock: r.lineInBlock || r.rowOrderInPage,
+                              pdfPage: r.pageNumber,
+                            },
+                            r.type
+                          );
+
                           return (
                             <tr key={r.id} className="border-b border-slate-200 hover:bg-slate-50">
-                              <td className="py-1.5 px-1.5 text-center">
+                              <td className="py-1.5 px-1 text-center">
                                 <input
                                   type="checkbox"
                                   checked={r.approved}
@@ -2099,6 +2518,39 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                                 />
                               </td>
                               <td className="py-1.5 px-1.5">
+                                <div className="flex items-center gap-1">
+                                  <select
+                                    value={r.blockIndex || 1}
+                                    title="الكتلة داخل الورقة: 1 يمين / 2 يسار (H-C)"
+                                    onChange={(e) => {
+                                      const blk = Number(e.target.value) === 2 ? 2 : 1;
+                                      updatePageAt(selectedPageIdx, (p) => {
+                                        const next = [...p.rows];
+                                        next[realIdx] = {
+                                          ...r,
+                                          blockIndex: blk,
+                                          seq: computeSheetRowSeq(
+                                            blk,
+                                            r.lineInBlock || r.rowOrderInPage
+                                          ).seq,
+                                        };
+                                        return { ...p, rows: next };
+                                      });
+                                    }}
+                                    className="px-1 py-0.5 text-[10px] border border-slate-200 rounded bg-slate-50 font-bold"
+                                  >
+                                    <option value={1}>يمين 1</option>
+                                    <option value={2}>يسار 2</option>
+                                  </select>
+                                  <span
+                                    className="text-[10px] text-slate-500 font-mono truncate max-w-[75px]"
+                                    title={rowRefLabel}
+                                  >
+                                    س{r.lineInBlock || r.rowOrderInPage}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="py-1.5 px-1">
                                 <select
                                   value={r.type}
                                   onChange={(e) => {
@@ -2123,9 +2575,25 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                                   value={r.item}
                                   onChange={(e) => {
                                     const newVal = e.target.value;
+                                    const reclass =
+                                      r.type === 'sell'
+                                        ? classifySourceBucket(
+                                            newVal,
+                                            settings,
+                                            r.sourceHint ? String(r.sourceHint) : undefined
+                                          )
+                                        : null;
                                     updatePageAt(selectedPageIdx, (p) => {
                                       const next = [...p.rows];
-                                      next[realIdx] = { ...r, item: newVal };
+                                      next[realIdx] = {
+                                        ...r,
+                                        item: newVal,
+                                        sourceBucket: reclass ? reclass.bucket : r.sourceBucket,
+                                        sourceGuessed: reclass ? reclass.isGuessed : r.sourceGuessed,
+                                        multiSourceWarning: reclass
+                                          ? reclass.multiSourceWarning
+                                          : r.multiSourceWarning,
+                                      };
                                       return { ...p, rows: next };
                                     });
                                   }}
@@ -2141,6 +2609,72 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                                   }}
                                   className="w-full px-2 py-1 border border-slate-200 rounded bg-white"
                                 />
+                              </td>
+                              <td className="py-1.5 px-1 text-center">
+                                {r.type === 'sell' ? (
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={99}
+                                    value={r.pieces ?? ''}
+                                    placeholder="—"
+                                    title="عدد القطع المباعة المكتوب بالأحمر داخل دائرة (H5)"
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value, 10);
+                                      updatePageAt(selectedPageIdx, (p) => {
+                                        const next = [...p.rows];
+                                        next[realIdx] = {
+                                          ...r,
+                                          pieces:
+                                            Number.isFinite(val) && val > 0 ? val : undefined,
+                                        };
+                                        return { ...p, rows: next };
+                                      });
+                                    }}
+                                    className="w-12 px-1 py-0.5 text-center font-mono font-bold text-rose-700 bg-rose-50/70 border border-rose-300 rounded-full"
+                                  />
+                                ) : (
+                                  <span className="text-slate-300">—</span>
+                                )}
+                              </td>
+                              <td className="py-1.5 px-1.5">
+                                {r.type === 'sell' ? (
+                                  <div>
+                                    <select
+                                      value={r.sourceBucket || 'rayon'}
+                                      onChange={(e) => {
+                                        const newBucket = e.target.value as SalesSourceBucket;
+                                        recordManualSourceBucketOverride(r.item, newBucket);
+                                        const suggestions = getSuggestedBucketKeywords();
+                                        if (suggestions.length > 0) {
+                                          setSuggestedKeywordBanner(suggestions[0]);
+                                        }
+                                        updatePageAt(selectedPageIdx, (p) => {
+                                          const next = [...p.rows];
+                                          next[realIdx] = {
+                                            ...r,
+                                            sourceBucket: newBucket,
+                                            sourceGuessed: false,
+                                          };
+                                          return { ...p, rows: next };
+                                        });
+                                      }}
+                                      className="w-full px-1 py-0.5 text-[11px] font-bold border border-slate-200 rounded bg-white"
+                                    >
+                                      <option value="rayon">الريون</option>
+                                      <option value="bag">الكيس/العلب</option>
+                                      <option value="old_gold">الذهب القديم</option>
+                                      <option value="other">أخرى</option>
+                                    </select>
+                                    {r.multiSourceWarning && (
+                                      <span className="block text-[9px] text-amber-700 font-bold">
+                                        ⚠ تحقّق: مصدران؟
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400">شراء</span>
+                                )}
                               </td>
                               <td className="py-1.5 px-1.5">
                                 <input
@@ -2250,7 +2784,7 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  value={r.runningBalanceAfter ?? ''}
+                                  value={r.bookRunningCash ?? r.runningBalanceAfter ?? ''}
                                   placeholder="—"
                                   onChange={(e) => {
                                     const val = e.target.value
@@ -2258,60 +2792,18 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                                       : undefined;
                                     updatePageAt(selectedPageIdx, (p) => {
                                       const next = [...p.rows];
-                                      next[realIdx] = { ...r, runningBalanceAfter: val };
+                                      next[realIdx] = {
+                                        ...r,
+                                        runningBalanceAfter: val,
+                                        bookRunningCash: val,
+                                      };
                                       return { ...p, rows: next };
                                     });
                                   }}
                                   className="w-full px-1.5 py-1 font-mono border border-slate-200 rounded bg-slate-50"
                                 />
                               </td>
-                              <td className="py-1.5 px-1.5">
-                                {r.bookMarks && r.bookMarks.length > 0 ? (
-                                  <div className="space-y-1">
-                                    {r.bookMarks.map((m, mIdx) => (
-                                      <div
-                                        key={mIdx}
-                                        className="px-1.5 py-0.5 bg-rose-50 border border-rose-200 text-rose-800 rounded text-[10px] font-bold"
-                                      >
-                                        <span>
-                                          {m.type === 'circle'
-                                            ? '⭕ دائرة'
-                                            : m.type === 'tick'
-                                            ? '✔ صح'
-                                            : m.type === 'strike'
-                                            ? '➖ شطب'
-                                            : m.type === 'number'
-                                            ? `🔢 ${m.text}`
-                                            : `✍ ${m.text || 'علامة'}`}
-                                        </span>
-                                        {m.suggestedCorrectionValue &&
-                                          Math.abs(m.suggestedCorrectionValue - r.total) > 1 && (
-                                            <button
-                                              type="button"
-                                              onClick={() => {
-                                                updatePageAt(selectedPageIdx, (p) => {
-                                                  const next = [...p.rows];
-                                                  next[realIdx] = {
-                                                    ...r,
-                                                    total: m.suggestedCorrectionValue!,
-                                                  };
-                                                  return { ...p, rows: next };
-                                                });
-                                              }}
-                                              className="block text-[10px] text-rose-900 underline mt-0.5"
-                                            >
-                                              اعتمد الرقم الأحمر (
-                                              {formatNumber(m.suggestedCorrectionValue)})
-                                            </button>
-                                          )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span className="text-slate-400 text-[10px]">—</span>
-                                )}
-                              </td>
-                              <td className="py-1.5 px-1.5 text-center font-mono">
+                              <td className="py-1.5 px-1 text-center font-mono">
                                 {r.singlePassOnly ? (
                                   <span className="px-1 py-0.5 bg-red-100 text-red-800 rounded text-[10px] font-bold block">
                                     قراءة 1
@@ -2341,6 +2833,43 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                     </table>
                   </div>
 
+                  {/* H-C.3 Free Area Notes & H5 Red Other Notes */}
+                  {((currentPage.freeAreaNotes && currentPage.freeAreaNotes.length > 0) ||
+                    (currentPage.redOther && currentPage.redOther.length > 0)) && (
+                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-1.5">
+                      {currentPage.freeAreaNotes && currentPage.freeAreaNotes.length > 0 && (
+                        <div>
+                          <span className="font-bold text-slate-700">
+                            ملاحظات حرة أسفل الورقة (H-C.3):{' '}
+                          </span>
+                          {currentPage.freeAreaNotes.map((n, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-block px-2 py-0.5 bg-white border border-slate-200 rounded mr-1"
+                            >
+                              {n.text}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {currentPage.redOther && currentPage.redOther.length > 0 && (
+                        <div>
+                          <span className="font-bold text-rose-800">
+                            أرقام حمراء أخرى غير مرتبطة بصف (red_other — H5):{' '}
+                          </span>
+                          {currentPage.redOther.map((ro, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-block px-2 py-0.5 bg-rose-50 border border-rose-200 text-rose-900 rounded mr-1"
+                            >
+                              {ro.text} {ro.locationHint ? `(${ro.locationHint})` : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     onClick={() =>
@@ -2356,6 +2885,11 @@ export const PhotoUploadScreen: React.FC<{ onAddedSuccess: () => void }> = ({
                             weightG: 0,
                             total: 0,
                             confidence: 1,
+                            blockIndex: 1,
+                            lineInBlock: p.rows.length + 1,
+                            seq: computeSheetRowSeq(1, p.rows.length + 1).seq,
+                            pieces: 1,
+                            sourceBucket: 'rayon',
                             pageId: p.id,
                             pageNumber: p.pageNumber,
                             rowOrderInPage: p.rows.length + 1,

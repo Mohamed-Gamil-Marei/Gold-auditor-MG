@@ -1,5 +1,6 @@
 import { AuditSettings, DayInfo, Issue, Operation } from '../../types';
 import { formatNumber, formatWeight } from '../numerals';
+import { formatSourceRef, sortOperationsByLedgerOrder } from '../sourceBuckets';
 
 /**
  * H4 — فحص حسابات الدفتر نفسه (الرصيد المتتابع checkLedgerArithmetic)
@@ -75,17 +76,14 @@ export function checkLedgerArithmetic(
 
   let prevDayClosingBalance: { date: string; balance: number } | null = null;
 
+  const linesPerBlock = settings.ledgerLinesPerBlock || 25;
+
   for (const date of allDates) {
     const dayInfo = daysMap[date];
-    const dayOps = (opsByDate.get(date) || []).slice().sort((a, b) => {
-      const pA = Number(a.pageNumberHint ?? a.sourcePageRef?.pageIndex ?? 1);
-      const pB = Number(b.pageNumberHint ?? b.sourcePageRef?.pageIndex ?? 1);
-      if (pA !== pB) return pA - pB;
-      const rA = a.rowOrderInPage ?? 0;
-      const rB = b.rowOrderInPage ?? 0;
-      if (rA !== rB) return rA - rB;
-      return a.createdAt - b.createdAt;
-    });
+    const dayOps = sortOperationsByLedgerOrder(
+      opsByDate.get(date) || [],
+      linesPerBlock
+    );
 
     const opsWithRunning = dayOps.filter(
       (o) =>
@@ -126,8 +124,19 @@ export function checkLedgerArithmetic(
     // Track within-row and row-to-row / page-to-continuation continuity
     for (let i = 0; i < dayOps.length; i++) {
       const op = dayOps[i];
-      const pageLabel = op.pageNumberHint ?? op.sourcePageRef?.pageIndex ?? 1;
-      const rowLabel = op.rowOrderInPage ?? i + 1;
+      const pageLabel =
+        op.pageNumberHint ??
+        op.sourcePageRef?.sheetIndexInDay ??
+        op.sourcePageRef?.pageIndex ??
+        1;
+      const rowLabel =
+        op.sourcePageRef?.lineInBlock ??
+        op.sourcePageRef?.lineNo ??
+        op.rowOrderInPage ??
+        i + 1;
+      const refDetail = op.sourcePageRef
+        ? formatSourceRef(op.sourcePageRef, op.kind, op.date, true)
+        : `يوم ${op.date}، ورقة ${pageLabel}، صف #${rowLabel}`;
       const conf = typeof op.ocrConfidence === 'number' ? op.ocrConfidence : 0.9;
       const isHighConfidence = conf >= 0.75;
       const certaintyTag = isHighConfidence
@@ -164,7 +173,7 @@ export function checkLedgerArithmetic(
             expected: `${formatNumber(primaryExpected)} ج.م`,
             actual: `${formatNumber(op.runningBalanceAfter)} ج.م`,
             difference: `${formatNumber(diffPrimary)} ج.م`,
-            message: `${certaintyTag} — خطأ جمع داخل الصف (يوم ${op.date}، ورقة ${pageLabel}، صف #${rowLabel}): الرصيد قبل (${formatNumber(
+            message: `${certaintyTag} — خطأ جمع داخل الصف (${refDetail}): الرصيد قبل (${formatNumber(
               op.runningBalanceBefore
             )}) ${dir === 'add' ? '+' : '-'} مبلغ الصف (${formatNumber(
               op.total

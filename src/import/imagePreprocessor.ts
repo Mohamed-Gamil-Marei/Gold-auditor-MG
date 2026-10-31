@@ -42,22 +42,81 @@ export function computeImageHash(dataUrlOrBase64: string): string {
 
 /**
  * Default regions for a standard two-half ledger page (Right = Sell, Left = Buy)
+ * and H-C two-block structure per sheet (Block 1 = Right, Block 2 = Left).
  */
-export function getDefaultLedgerRegions(mode: 'both_split' | 'right_sell' | 'left_buy' | 'full' | 'top_bottom_sheets'): LedgerPageRegion[] {
+export function getDefaultLedgerRegions(
+  mode:
+    | 'both_split'
+    | 'two_blocks_per_sheet'
+    | 'right_sell'
+    | 'left_buy'
+    | 'full'
+    | 'top_bottom_sheets',
+  reverseLayout = false
+): LedgerPageRegion[] {
+  const rightSide: 'sell' | 'buy' = reverseLayout ? 'buy' : 'sell';
+  const leftSide: 'sell' | 'buy' = reverseLayout ? 'sell' : 'buy';
+  const rightLabel = rightSide === 'sell' ? 'المبيعات' : 'المشتريات';
+  const leftLabel = leftSide === 'sell' ? 'المبيعات' : 'المشتريات';
+
+  if (mode === 'two_blocks_per_sheet') {
+    return [
+      {
+        id: 'reg-right-b1',
+        label: `ورقة ${rightLabel} (يمين) — الكتلة اليمنى (1)`,
+        side: rightSide,
+        blockIndex: 1,
+        x: 0.74,
+        y: 0,
+        w: 0.26,
+        h: 1,
+      },
+      {
+        id: 'reg-right-b2',
+        label: `ورقة ${rightLabel} (يمين) — الكتلة اليسرى (2)`,
+        side: rightSide,
+        blockIndex: 2,
+        x: 0.49,
+        y: 0,
+        w: 0.26,
+        h: 1,
+      },
+      {
+        id: 'reg-left-b1',
+        label: `ورقة ${leftLabel} (يسار) — الكتلة اليمنى (1)`,
+        side: leftSide,
+        blockIndex: 1,
+        x: 0.25,
+        y: 0,
+        w: 0.26,
+        h: 1,
+      },
+      {
+        id: 'reg-left-b2',
+        label: `ورقة ${leftLabel} (يسار) — الكتلة اليسرى (2)`,
+        side: leftSide,
+        blockIndex: 2,
+        x: 0,
+        y: 0,
+        w: 0.26,
+        h: 1,
+      },
+    ];
+  }
   if (mode === 'right_sell') {
     return [
-      { id: 'reg-sell', label: 'نصف المبيعات الأيمن', side: 'sell', x: 0.48, y: 0, w: 0.52, h: 1 },
+      { id: 'reg-sell', label: `نصف ${rightLabel} الأيمن`, side: rightSide, x: 0.48, y: 0, w: 0.52, h: 1 },
     ];
   }
   if (mode === 'left_buy') {
     return [
-      { id: 'reg-buy', label: 'نصف المشتريات الأيسر', side: 'buy', x: 0, y: 0, w: 0.52, h: 1 },
+      { id: 'reg-buy', label: `نصف ${leftLabel} الأيسر`, side: leftSide, x: 0, y: 0, w: 0.52, h: 1 },
     ];
   }
   if (mode === 'top_bottom_sheets') {
     return [
-      { id: 'reg-top', label: 'الورقة العلوية', side: 'both', x: 0, y: 0, w: 1, h: 0.52 },
-      { id: 'reg-bottom', label: 'الورقة السفلية', side: 'both', x: 0, y: 0.48, w: 1, h: 0.52 },
+      { id: 'reg-top', label: `الورقة العلوية (${rightLabel})`, side: rightSide, x: 0, y: 0, w: 1, h: 0.52 },
+      { id: 'reg-bottom', label: `الورقة السفلية (${leftLabel})`, side: leftSide, x: 0, y: 0.48, w: 1, h: 0.52 },
     ];
   }
   if (mode === 'full') {
@@ -66,8 +125,8 @@ export function getDefaultLedgerRegions(mode: 'both_split' | 'right_sell' | 'lef
     ];
   }
   return [
-    { id: 'reg-sell', label: 'نصف المبيعات الأيمن', side: 'sell', x: 0.48, y: 0, w: 0.52, h: 1 },
-    { id: 'reg-buy', label: 'نصف المشتريات الأيسر', side: 'buy', x: 0, y: 0, w: 0.52, h: 1 },
+    { id: 'reg-sell', label: `نصف ${rightLabel} الأيمن`, side: rightSide, x: 0.48, y: 0, w: 0.52, h: 1 },
+    { id: 'reg-buy', label: `نصف ${leftLabel} الأيسر`, side: leftSide, x: 0, y: 0, w: 0.52, h: 1 },
   ];
 }
 

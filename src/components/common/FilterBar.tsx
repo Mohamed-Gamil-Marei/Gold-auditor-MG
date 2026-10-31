@@ -13,6 +13,7 @@ import {
   Operation,
   OperationKind,
   Person,
+  SalesSourceBucket,
   SavedFilterPreset,
   UnifiedFilterState,
   Worker,
@@ -33,6 +34,7 @@ export function createDefaultUnifiedFilter(
     datePreset: 'all',
     kinds: [],
     karats: [],
+    sourceBuckets: [],
     itemQuery: '',
     personId: '',
     workerId: '',
@@ -145,6 +147,12 @@ export function applyUnifiedFilterToOperations(params: {
       if (!filter.karats.includes(k)) return false;
     }
 
+    if (filter.sourceBuckets && filter.sourceBuckets.length > 0) {
+      if (op.kind !== 'sell') return false;
+      const b = op.sourceBucket || 'rayon';
+      if (!filter.sourceBuckets.includes(b)) return false;
+    }
+
     if (filter.personId && op.personId !== filter.personId) return false;
     if (filter.workerId && op.workerId !== filter.workerId) return false;
 
@@ -225,6 +233,19 @@ export function applyUnifiedFilterToOperations(params: {
       key: 'karats',
       label: `العيار: ${filter.karats.join(' أو ')}`,
       onClear: (f) => ({ ...f, karats: [] }),
+    });
+  }
+  if (filter.sourceBuckets && filter.sourceBuckets.length > 0) {
+    const bLabels: Record<SalesSourceBucket, string> = {
+      rayon: 'الريون',
+      bag: 'الكيس/العلب',
+      old_gold: 'الذهب القديم',
+      other: 'أخرى',
+    };
+    activeChips.push({
+      key: 'sourceBuckets',
+      label: `مصدر البيع: ${filter.sourceBuckets.map((b) => bLabels[b]).join(' أو ')}`,
+      onClear: (f) => ({ ...f, sourceBuckets: [] }),
     });
   }
   if (filter.personId) {
@@ -377,6 +398,13 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     onChange({ ...filter, karats: nextKarats });
   };
 
+  const toggleSourceBucket = (b: SalesSourceBucket) => {
+    const current = filter.sourceBuckets || [];
+    const exists = current.includes(b);
+    const nextBuckets = exists ? current.filter((x) => x !== b) : [...current, b];
+    onChange({ ...filter, sourceBuckets: nextBuckets });
+  };
+
   const resetAll = () => {
     onChange(createDefaultUnifiedFilter());
   };
@@ -386,6 +414,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     Boolean(filter.toDate) ||
     filter.kinds.length > 0 ||
     filter.karats.length > 0 ||
+    Boolean(filter.sourceBuckets && filter.sourceBuckets.length > 0) ||
     Boolean(filter.itemQuery.trim()) ||
     Boolean(filter.personId) ||
     Boolean(filter.workerId) ||
@@ -601,6 +630,39 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                       }`}
                     >
                       {kr === 'other' ? 'آخر' : kr}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Source Bucket Multi-Select (H7.6) */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                مصدر البيع (الريون / الكيس / القديم — H7):
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    { id: 'rayon', label: 'الريون' },
+                    { id: 'bag', label: 'الكيس/العلب' },
+                    { id: 'old_gold', label: 'الذهب القديم' },
+                    { id: 'other', label: 'أخرى' },
+                  ] as const
+                ).map((sb) => {
+                  const active = (filter.sourceBuckets || []).includes(sb.id);
+                  return (
+                    <button
+                      key={sb.id}
+                      type="button"
+                      onClick={() => toggleSourceBucket(sb.id)}
+                      className={`px-2 py-1 rounded font-bold cursor-pointer ${
+                        active
+                          ? 'bg-purple-700 text-white'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                    >
+                      {sb.label}
                     </button>
                   );
                 })}

@@ -46,6 +46,10 @@ import {
   createDefaultUnifiedFilter,
   applyUnifiedFilterToOperations,
 } from './common/FilterBar';
+import { SalesSourceBucket } from '../types';
+import { formatSourceRef } from '../utils/sourceBuckets';
+import { DayCloseAndBucketsModal } from './common/DayCloseAndBucketsModal';
+import { LedgerPageViewerModal } from './common/LedgerPageViewerModal';
 
 const KIND_META: Record<
   OperationKind,
@@ -121,6 +125,7 @@ interface MemoRowProps {
   onToggleReview: (id: string) => void;
   onFocusRowInput: (rowIndex: number, dir: 'up' | 'down') => void;
   rowRefSetter: (index: number, el: HTMLInputElement | null) => void;
+  onOpenLedgerRef?: (op: Operation) => void;
 }
 
 const FastTableRow = React.memo(function FastTableRow({
@@ -137,6 +142,7 @@ const FastTableRow = React.memo(function FastTableRow({
   onToggleReview,
   onFocusRowInput,
   rowRefSetter,
+  onOpenLedgerRef,
 }: MemoRowProps) {
   const settings = useAuditStore((s) => s.settings);
   const persons = useAuditStore((s) => s.persons);
@@ -338,18 +344,98 @@ const FastTableRow = React.memo(function FastTableRow({
           {gramPrice > 0 ? `${formatNumber(gramPrice)} ج.م` : '—'}
         </td>
         {(showItemColumn || op.kind !== 'buy') && (
-          <td className="py-1.5 px-3 min-w-[160px]">
+          <td className="py-1.5 px-3 min-w-[240px]">
             {op.kind === 'buy' || op.kind === 'sell' ? (
-              <input
-                type="text"
-                disabled={isLocked}
-                value={editingItem}
-                placeholder={op.payment === 'credit' ? contextLabel : 'البيان...'}
-                onChange={(e) => setEditingItem(e.target.value)}
-                onBlur={commitItemEdit}
-                onKeyDown={handleRowKeyDown}
-                className="w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-amber-600 outline-none disabled:bg-slate-100"
-              />
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    disabled={isLocked}
+                    value={editingItem}
+                    placeholder={op.payment === 'credit' ? contextLabel : 'البيان...'}
+                    onChange={(e) => setEditingItem(e.target.value)}
+                    onBlur={commitItemEdit}
+                    onKeyDown={handleRowKeyDown}
+                    className="flex-1 min-w-[110px] px-2.5 py-1 text-sm bg-white border border-slate-200 rounded focus:border-amber-600 outline-none disabled:bg-slate-100"
+                  />
+                  {/* H5: Piece Count (Red circled number) */}
+                  <input
+                    type="number"
+                    min={0}
+                    max={500}
+                    disabled={isLocked}
+                    title="عدد القطع المباعة من الريون (الرقم الأحمر بالدائرة — H5)"
+                    placeholder="قطع"
+                    value={op.pieces ?? ''}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      const val = raw === '' ? undefined : Math.max(0, Math.round(Number(raw)));
+                      onUpdate(op.id, { pieces: val }, 'تعديل عدد القطع');
+                    }}
+                    className="w-14 px-1.5 py-1 text-xs font-mono font-bold text-center bg-red-50/70 text-red-900 border border-red-300 rounded focus:border-red-600 outline-none"
+                  />
+                  {/* H7 & H-B: Sales Source Bucket selector */}
+                  {op.kind === 'sell' && (
+                    <select
+                      disabled={isLocked}
+                      title={
+                        op.sourceGuessed
+                          ? `المصدر تحدد بالتخمين (${op.sourceHint || 'تلقائي'}) — اختر لتأكيده`
+                          : 'مصدر البيع (الريون / الكيس / الذهب القديم — H7)'
+                      }
+                      value={op.sourceBucket || 'rayon'}
+                      onChange={(e) =>
+                        onUpdate(
+                          op.id,
+                          {
+                            sourceBucket: e.target.value as SalesSourceBucket,
+                            sourceGuessed: false,
+                          },
+                          'تحديد مصدر البيع'
+                        )
+                      }
+                      className={`px-1.5 py-1 text-[11px] font-bold rounded border outline-none ${
+                        op.sourceGuessed
+                          ? 'bg-amber-100 text-amber-950 border-amber-400 ring-1 ring-amber-400'
+                          : (op.sourceBucket || 'rayon') === 'old_gold'
+                          ? 'bg-purple-50 text-purple-900 border-purple-300'
+                          : (op.sourceBucket || 'rayon') === 'bag'
+                          ? 'bg-blue-50 text-blue-900 border-blue-300'
+                          : 'bg-slate-100 text-slate-800 border-slate-200'
+                      }`}
+                    >
+                      <option value="rayon">الريون</option>
+                      <option value="bag">الكيس/العلب</option>
+                      <option value="old_gold">الذهب القديم</option>
+                      <option value="other">آخر</option>
+                    </select>
+                  )}
+                </div>
+                {/* H5.1 & H-C: Clickable SourceRef */}
+                {op.sourcePageRef && (
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => onOpenLedgerRef?.(op)}
+                      className="text-amber-800 hover:underline font-semibold flex items-center gap-1"
+                      title="اضغط لعرض الورقة والسطر في الدفتر المصوّر"
+                    >
+                      <span>📄 {formatSourceRef(op.sourcePageRef, op.kind, op.date)}</span>
+                    </button>
+                    {op.sourceGuessed && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdate(op.id, { sourceGuessed: false }, 'تأكيد المصدر المخمّن')
+                        }
+                        className="text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded hover:bg-amber-200"
+                      >
+                        تأكيد المصدر ({op.sourceHint || 'مخمّن'}) ✓
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             ) : (
               <span className="text-xs font-medium text-slate-700">{contextLabel}</span>
             )}
@@ -549,6 +635,10 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
   // Quick Safe & Inventory drawer toggle
   const [showReconcileStrip, setShowReconcileStrip] = useState(false);
   const [showAttachedImageModal, setShowAttachedImageModal] = useState(false);
+  const [showDayCloseModal, setShowDayCloseModal] = useState(false);
+  const [viewerHighlightOp, setViewerHighlightOp] = useState<Operation | null>(null);
+  const [piecesInput, setPiecesInput] = useState('');
+  const [draftSourceBucket, setDraftSourceBucket] = useState<'auto' | SalesSourceBucket>('auto');
 
   // Undo toast timer
   const [showUndoBanner, setShowUndoBanner] = useState(false);
@@ -872,6 +962,11 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
         }
       }
 
+      const parsedPieces =
+        piecesInput.trim() !== '' && Number(piecesInput) > 0
+          ? Math.round(Number(piecesInput))
+          : undefined;
+
       addOperation({
         date: currentDate,
         kind: currentKind,
@@ -881,11 +976,19 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
         item: itemInput.trim(),
         payment: paymentType,
         personId: resolvedPersonId,
+        pieces: parsedPieces,
+        sourceBucket:
+          currentKind === 'sell' && draftSourceBucket !== 'auto'
+            ? draftSourceBucket
+            : undefined,
+        sourceGuessed:
+          currentKind === 'sell' && draftSourceBucket !== 'auto' ? false : undefined,
       });
 
       setWeightInput('');
       setTotalInput('');
       setItemInput('');
+      setPiecesInput('');
       setLookupQuery('');
       setSelectedEntityId('');
       setAmbiguousWeightPrompt(null);
@@ -1150,11 +1253,32 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
       dayInfo.closingBalanceG !== undefined && dayInfo.closingBalanceG !== null;
     const goldDiffG = hasActualGold ? dayInfo.closingBalanceG! - expectedClosingGoldG : 0;
 
+    let sellRayonG = 0;
+    let sellRayonPieces = 0;
+    let sellBagG = 0;
+    let sellOldGoldG = 0;
+
+    for (const op of dayOperations) {
+      if (op.kind === 'sell') {
+        const b = op.sourceBucket || 'rayon';
+        if (b === 'old_gold') sellOldGoldG += op.weightG || 0;
+        else if (b === 'bag') sellBagG += op.weightG || 0;
+        else {
+          sellRayonG += op.weightG || 0;
+          sellRayonPieces += op.pieces || 0;
+        }
+      }
+    }
+
     return {
       buyG,
       buyTotal,
       sellG,
       sellTotal,
+      sellRayonG,
+      sellRayonPieces,
+      sellBagG,
+      sellOldGoldG,
       netG: buyG - sellG,
       netCashSalesMinusBuy: sellTotal - buyTotal,
       safeSummary,
@@ -1368,6 +1492,15 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
             >
               <Coins className="w-3.5 h-3.5" />
               <span>خزنة وجرد اليوم</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowDayCloseModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-extrabold transition-colors whitespace-nowrap shadow-xs"
+            >
+              <Scale className="w-3.5 h-3.5" />
+              <span>قفل اليوم ومطابقة المصادر (H10/H7)</span>
             </button>
 
             <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-medium cursor-pointer whitespace-nowrap">
@@ -1768,6 +1901,34 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
               </div>
             )}
 
+            {/* H7: Default Source Bucket selector for new sales */}
+            {currentKind === 'sell' && (
+              <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-lg">
+                <span className="text-[11px] font-bold text-slate-600 px-1.5">المصدر:</span>
+                {(
+                  [
+                    { id: 'auto', label: 'تلقائي بالبيان' },
+                    { id: 'rayon', label: 'الريون' },
+                    { id: 'bag', label: 'الكيس' },
+                    { id: 'old_gold', label: 'القديم' },
+                  ] as const
+                ).map((bOpt) => (
+                  <button
+                    key={bOpt.id}
+                    type="button"
+                    onClick={() => setDraftSourceBucket(bOpt.id)}
+                    className={`px-2 py-1 rounded-md text-xs font-bold transition-colors ${
+                      draftSourceBucket === bOpt.id
+                        ? 'bg-slate-900 text-amber-400 shadow-xs'
+                        : 'text-slate-700 hover:text-slate-900'
+                    }`}
+                  >
+                    {bOpt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {currentKind === 'person' && (
               <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-lg">
                 <button
@@ -1905,6 +2066,7 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
                   onToggleReview={toggleOperationReviewed}
                   onFocusRowInput={handleRowFocusNavigation}
                   rowRefSetter={setRowRef}
+                  onOpenLedgerRef={(op) => setViewerHighlightOp(op)}
                 />
               ))}
 
@@ -2243,21 +2405,42 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
                           />
                         </div>
                       ) : showItemColumn ? (
-                        <input
-                          ref={thirdInputRef}
-                          type="text"
-                          enterKeyHint="done"
-                          value={itemInput}
-                          onChange={(e) => setItemInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              commitNewEntryRow();
-                            }
-                          }}
-                          placeholder="البيان (اختياري — Enter للحفظ)..."
-                          className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:border-amber-600"
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            ref={thirdInputRef}
+                            type="text"
+                            enterKeyHint="done"
+                            value={itemInput}
+                            onChange={(e) => setItemInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                commitNewEntryRow();
+                              }
+                            }}
+                            placeholder="البيان (مثال: خاتم / من القديم / كيس — Enter للحفظ)..."
+                            className="flex-1 px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:border-amber-600"
+                          />
+                          {(currentKind === 'sell' || currentKind === 'buy') && (
+                            <input
+                              type="number"
+                              min={0}
+                              max={500}
+                              tabIndex={-1}
+                              value={piecesInput}
+                              onChange={(e) => setPiecesInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  commitNewEntryRow();
+                                }
+                              }}
+                              placeholder="قطع"
+                              title="عدد القطع المباعة من الريون (الأعداد الحمراء H5)"
+                              className="w-16 px-2 py-2 text-xs font-mono font-bold text-center bg-red-50/60 text-red-900 border border-red-300 rounded-lg outline-none focus:border-red-600"
+                            />
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs text-slate-400 px-2">
                           اضغط Enter في السعر للحفظ الفوري
@@ -2384,6 +2567,61 @@ export const FastEntryScreen: React.FC<{ onGoToAudit: () => void }> = ({ onGoToA
             </div>
           </div>
         </div>
+      )}
+
+      {/* H7.5: Per-Source Summary Bar (Rayon / Bag / Old Gold) */}
+      <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="font-bold text-slate-800">
+            توزيع مبيعات اليوم حسب المصدر (H7):
+          </span>
+          <span className="text-slate-700">
+            الريون (المعروض):{' '}
+            <strong className="font-mono text-amber-800">
+              {formatWeight(dayStats.sellRayonG)} ج
+            </strong>{' '}
+            ({dayStats.sellRayonPieces} قطعة حمراء)
+          </span>
+          <span className="text-slate-400">·</span>
+          <span className="text-slate-700">
+            الكيس / العلب:{' '}
+            <strong className="font-mono text-blue-800">
+              {formatWeight(dayStats.sellBagG)} ج
+            </strong>
+          </span>
+          <span className="text-slate-400">·</span>
+          <span className="text-slate-700">
+            الذهب القديم:{' '}
+            <strong className="font-mono text-purple-800">
+              {formatWeight(dayStats.sellOldGoldG)} ج
+            </strong>
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowDayCloseModal(true)}
+          className="text-xs font-bold text-amber-800 hover:underline flex items-center gap-1"
+        >
+          <Scale className="w-3.5 h-3.5" />
+          <span>فتح مطابقة المخزون وقفل اليوم (H10/H7) ←</span>
+        </button>
+      </div>
+
+      {/* H10 & H7: Day Close and Source Buckets Reconciliation Modal */}
+      <DayCloseAndBucketsModal
+        isOpen={showDayCloseModal}
+        date={currentDate}
+        onClose={() => setShowDayCloseModal(false)}
+      />
+
+      {/* P5 & H5.1: Ledger Page Viewer Modal when clicking SourceRef */}
+      {viewerHighlightOp && (
+        <LedgerPageViewerModal
+          isOpen={Boolean(viewerHighlightOp)}
+          date={viewerHighlightOp.date}
+          highlightOperation={viewerHighlightOp}
+          onClose={() => setViewerHighlightOp(null)}
+        />
       )}
 
       {/* Fixed Bottom Totals Bar */}

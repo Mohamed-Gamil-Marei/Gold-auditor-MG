@@ -5,6 +5,7 @@ import {
   AuditVisit,
   AuditVisitChecklist,
   AuditVisitSummarySnapshot,
+  BucketDailyReconciliation,
   DayChecklist,
   DayInfo,
   DeletedOperationEntry,
@@ -21,6 +22,7 @@ import {
   PriceStatementPreset,
   QuarantinedRecord,
   SafetySnapshot,
+  SalesSourceBucket,
   SavedFilterPreset,
   SensitivityPreset,
   Worker,
@@ -32,6 +34,12 @@ import { validateAndQuarantineState } from '../validation/schemas';
 import { reportAppError } from '../errors/catalog';
 import { FixItSuggestion } from '../utils/fixItEngine';
 import { randomSuffix } from '../utils/ids';
+import {
+  classifySourceBucket,
+  DEFAULT_ITEMS_EXPECTING_PIECES,
+  DEFAULT_SOURCE_BUCKETS_CONFIG,
+  recordManualSourceBucketOverride,
+} from '../utils/sourceBuckets';
 
 export const DEFAULT_EXPENSE_CATEGORIES = [
   'كهرباء',
@@ -101,6 +109,16 @@ export const DEFAULT_SETTINGS: AuditSettings = {
   },
   convertRedCircleToReviewed: false,
   retainScannedPagesWithDay: true,
+  blockImportOnUnapprovedLargeDiff: true,
+  enableSelfLearningDictionary: true,
+  reverseLedgerSheetLayout: false,
+  ledgerLinesPerBlock: 25,
+  itemsExpectingPieces: DEFAULT_ITEMS_EXPECTING_PIECES,
+  sourceBucketsConfig: DEFAULT_SOURCE_BUCKETS_CONFIG,
+  includeStandaloneKasrForOldGold: false,
+  autoAddScrapPurchasesToOldGoldInflow: true,
+  purchasesSafeBalanceImpact: 'deduct_end_of_day',
+  goldAvailabilityRuleMode: 'with_opening',
 };
 
 export interface CarryOverConflictInfo {
@@ -187,6 +205,11 @@ export interface AuditStoreState {
     date: string,
     karatKey: KaratKey,
     patch: Partial<KaratBalanceEntry>
+  ) => void;
+  updateDayBucketReconciliation: (
+    date: string,
+    bucket: SalesSourceBucket,
+    patch: Partial<BucketDailyReconciliation>
   ) => void;
   resolveCarryOverConflict: (confirmOverwrite: boolean) => void;
   updateDayChecklist: (date: string, patch: Partial<DayChecklist>) => void;
@@ -1134,6 +1157,83 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       });
     },
 
+    updateDayBucketReconciliation: (date, bucket, patch) => {
+      set((state) => {
+        if (state.daysMap[date]?.locked) return {};
+        const existing = state.daysMap[date] || {
+          date,
+          goldPricePerGram: findSuggestedGoldPrice(date, state.daysMap),
+          priceConfirmed: false,
+          locked: false,
+        };
+        const currentBuckets = existing.bucketReconciliation || {};
+        const currentEntry: BucketDailyReconciliation = currentBuckets[bucket] || {};
+        const updatedEntry: BucketDailyReconciliation = {
+          ...currentEntry,
+          ...patch,
+          ...(patch.beforeG !== undefined ? { beforeManual: true } : {}),
+        };
+
+        const updatedDay: DayInfo = {
+          ...existing,
+          bucketReconciliation: {
+            ...currentBuckets,
+            [bucket]: updatedEntry,
+          },
+        };
+
+        const nextDaysMap: Record<string, DayInfo> = {
+          ...state.daysMap,
+          [date]: updatedDay,
+        };
+
+        // H7.3 & H10.5: Carry over actualG and piecesActual to nearest subsequent active day
+        if (patch.actualG !== undefined || patch.piecesActual !== undefined) {
+          const nearestNextDate = findNearestSubsequentActiveDate(
+            date,
+            state.operations,
+            nextDaysMap
+          );
+          if (nearestNextDate && !nextDaysMap[nearestNextDate]?.locked) {
+            const nextDay = nextDaysMap[nearestNextDate] || {
+              date: nearestNextDate,
+              goldPricePerGram: updatedDay.goldPricePerGram,
+              priceConfirmed: false,
+              locked: false,
+            };
+            const nextBuckets = nextDay.bucketReconciliation || {};
+            const nextBucketEntry = nextBuckets[bucket] || {};
+            const nextPatch: Partial<BucketDailyReconciliation> = {};
+            if (
+              patch.actualG !== undefined &&
+              (!nextBucketEntry.beforeManual || nextBucketEntry.beforeG === undefined)
+            ) {
+              nextPatch.beforeG = patch.actualG;
+            }
+            if (patch.piecesActual !== undefined && nextBucketEntry.piecesBefore === undefined) {
+              nextPatch.piecesBefore = patch.piecesActual;
+            }
+            if (Object.keys(nextPatch).length > 0) {
+              nextDaysMap[nearestNextDate] = {
+                ...nextDay,
+                bucketReconciliation: {
+                  ...nextBuckets,
+                  [bucket]: {
+                    ...nextBucketEntry,
+                    ...nextPatch,
+                  },
+                },
+              };
+            }
+          }
+        }
+
+        const nextState = { ...state, daysMap: nextDaysMap };
+        persistStateSnapshot(nextState);
+        return { daysMap: nextDaysMap };
+      });
+    },
+
     resolveCarryOverConflict: (confirmOverwrite) => {
       set((state) => {
         const conflict = state.carryOverConflict;
@@ -1251,6 +1351,10 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       }
 
       const now = Date.now();
+      const autoBucket =
+        opInput.kind === 'sell'
+          ? classifySourceBucket(opInput.item, state.settings, opInput.sourceHint)
+          : null;
       const newOp: Operation = {
         id: `op-${now}-${randomSuffix(5)}`,
         date: opInput.date,
@@ -1267,6 +1371,20 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
         workerId: opInput.workerId,
         direction: opInput.direction,
         category: opInput.category,
+        pieces: opInput.pieces,
+        piecesConfidence: opInput.piecesConfidence,
+        sourceBucket:
+          opInput.sourceBucket ||
+          (autoBucket ? autoBucket.bucket : opInput.kind === 'sell' ? 'rayon' : undefined),
+        sourceHint: opInput.sourceHint || autoBucket?.matchedKeyword,
+        sourceGuessed:
+          opInput.sourceGuessed !== undefined
+            ? opInput.sourceGuessed
+            : Boolean(!opInput.sourceBucket && autoBucket?.isGuessed),
+        multiSourceWarning:
+          opInput.multiSourceWarning ?? Boolean(autoBucket?.multiSourceWarning),
+        bookRunningCash: opInput.bookRunningCash,
+        sourcePageRef: opInput.sourcePageRef,
         reviewedFlag: opInput.reviewedFlag ?? false,
         note: opInput.note ?? '',
         createdAt: now,
@@ -1337,33 +1455,57 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
 
       const now = Date.now();
       const batchId = `batch-${now}-${randomSuffix(4)}`;
-      const createdOps: Operation[] = rows.map((r, i) => ({
-        id: `op-batch-${now}-${i}-${randomSuffix(4)}`,
-        date: r.date,
-        kind: r.kind,
-        karat: r.karat || (r.kind === 'buy' || r.kind === 'sell' ? 21 : undefined),
-        weightG: r.weightG || 0,
-        total: r.total || 0,
-        item: r.item || '',
-        payment: r.payment || 'cash',
-        personId: r.personId,
-        workerId: r.workerId,
-        direction: r.direction,
-        category: r.category,
-        reviewedFlag: r.reviewedFlag ?? false,
-        note: r.note || '',
-        runningBalanceBefore: r.runningBalanceBefore,
-        runningBalanceAfter: r.runningBalanceAfter,
-        pageNumberHint: r.pageNumberHint,
-        rowOrderInPage: r.rowOrderInPage,
-        ocrConfidence: r.ocrConfidence,
-        bookMarks: r.bookMarks,
-        sourcePageRef: r.sourcePageRef,
-        createdAt: now + i,
-        updatedAt: now + i,
-        importBatchId: r.importBatchId || batchId,
-        sourceType: r.sourceType || batchMeta?.sourceType || 'table',
-      }));
+      const createdOps: Operation[] = rows.map((r, i) => {
+        const autoBucket =
+          r.kind === 'sell'
+            ? classifySourceBucket(r.item, state.settings, r.sourceHint)
+            : null;
+        return {
+          id: `op-batch-${now}-${i}-${randomSuffix(4)}`,
+          date: r.date,
+          kind: r.kind,
+          karat: r.karat || (r.kind === 'buy' || r.kind === 'sell' ? 21 : undefined),
+          weightG: r.weightG || 0,
+          total: r.total || 0,
+          item: r.item || '',
+          payment: r.payment || 'cash',
+          personId: r.personId,
+          workerId: r.workerId,
+          direction: r.direction,
+          category: r.category,
+          reviewedFlag: r.reviewedFlag ?? false,
+          note: r.note || '',
+          runningBalanceBefore: r.runningBalanceBefore,
+          runningBalanceAfter: r.runningBalanceAfter,
+          bookRunningCash: r.bookRunningCash,
+          pageNumberHint: r.pageNumberHint,
+          rowOrderInPage: r.rowOrderInPage,
+          ocrConfidence: r.ocrConfidence,
+          pieces: r.pieces,
+          piecesConfidence: r.piecesConfidence,
+          sourceBucket:
+            r.sourceBucket ||
+            (autoBucket ? autoBucket.bucket : r.kind === 'sell' ? 'rayon' : undefined),
+          sourceHint: r.sourceHint || autoBucket?.matchedKeyword,
+          sourceGuessed:
+            r.sourceGuessed !== undefined
+              ? r.sourceGuessed
+              : Boolean(!r.sourceBucket && autoBucket?.isGuessed),
+          multiSourceWarning:
+            r.multiSourceWarning ?? Boolean(autoBucket?.multiSourceWarning),
+          bookMarks: r.bookMarks,
+          sourcePageRef: r.sourcePageRef
+            ? {
+                ...r.sourcePageRef,
+                importBatchId: r.sourcePageRef.importBatchId || r.importBatchId || batchId,
+              }
+            : undefined,
+          createdAt: now + i,
+          updatedAt: now + i,
+          importBatchId: r.importBatchId || batchId,
+          sourceType: r.sourceType || batchMeta?.sourceType || 'table',
+        };
+      });
 
       set((s) => {
         const nextDaysMap = { ...s.daysMap };
@@ -1463,7 +1605,22 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
       }
 
       const now = Date.now();
-      const updated: Operation = { ...existing, ...patch, updatedAt: now };
+      const updated: Operation = {
+        ...existing,
+        ...patch,
+        ...(patch.sourceBucket !== undefined && patch.sourceGuessed === undefined
+          ? { sourceGuessed: false }
+          : {}),
+        updatedAt: now,
+      };
+
+      if (
+        patch.sourceBucket &&
+        patch.sourceBucket !== existing.sourceBucket &&
+        updated.item
+      ) {
+        recordManualSourceBucketOverride(updated.item, patch.sourceBucket);
+      }
 
       const oldParts: string[] = [];
       const newParts: string[] = [];
@@ -1481,12 +1638,21 @@ export const useAuditStore = create<AuditStoreState>((set, get) => {
         }
       };
 
+      const SOURCE_LABELS: Record<string, string> = {
+        rayon: 'الريون',
+        bag: 'الكيس/العلب',
+        old_gold: 'الذهب القديم',
+        other: 'آخر',
+      };
+
       checkField('date', 'التاريخ');
       checkField('kind', 'النوع', (v) => KIND_LABELS[v as OperationKind] || v);
       checkField('karat', 'العيار', (v) => (v ? `عيار ${v}` : '21'));
       checkField('weightG', 'الوزن', (v) => `${formatWeight(Number(v) || 0)} ج`);
       checkField('total', 'المبلغ', (v) => `${formatNumber(Number(v) || 0)} ج.م`);
       checkField('item', 'البيان', (v) => v || 'بدون بيان');
+      checkField('pieces', 'عدد القطع', (v) => (v ? `${v} قطعة` : '—'));
+      checkField('sourceBucket', 'مصدر البيع', (v) => SOURCE_LABELS[v] || v || 'الريون');
       checkField('payment', 'الدفع', (v) => (v === 'credit' ? 'آجل' : 'نقدي'));
       checkField('personId', 'الشخص', (v) => state.persons.find((p) => p.id === v)?.name || v || '—');
       checkField('workerId', 'العامل', (v) => state.workers.find((w) => w.id === v)?.name || v || '—');

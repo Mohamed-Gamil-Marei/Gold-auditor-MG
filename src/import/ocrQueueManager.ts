@@ -64,7 +64,12 @@ export async function setCachedPageOcrResult(cacheKey: string, ocrData: any): Pr
 export function estimateOcrJobCostAndTime(
   pages: ScannedLedgerPage[],
   options: {
-    cropMode: 'both_split' | 'right_sell' | 'left_buy' | 'full';
+    cropMode:
+      | 'both_split'
+      | 'two_blocks_per_sheet'
+      | 'right_sell'
+      | 'left_buy'
+      | 'full';
     sliceHorizontally: boolean;
     readTwiceAndCompare: boolean;
   }
@@ -77,7 +82,12 @@ export function estimateOcrJobCostAndTime(
   }
 
   const netPagesToCall = Math.max(0, unread.length - cachedCount);
-  const sidesFactor = options.cropMode === 'both_split' ? 2 : 1;
+  const sidesFactor =
+    options.cropMode === 'two_blocks_per_sheet'
+      ? 4
+      : options.cropMode === 'both_split'
+      ? 2
+      : 1;
   const sliceFactor = options.sliceHorizontally ? 2 : 1;
   const passFactor = options.readTwiceAndCompare ? 2 : 1;
   const requestsPerPage = sidesFactor * sliceFactor * passFactor;

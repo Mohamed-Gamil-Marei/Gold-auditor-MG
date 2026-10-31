@@ -2699,6 +2699,123 @@ export const SettingsAndBackupScreen: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* H-A, H-B, H7, H9, H10 Settings Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs pt-2 border-t border-slate-100">
+          {/* H-A & H9: Layout & Safe Balance Rules */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5">
+            <div className="font-bold text-slate-800">
+              تخطيط الورقتين ورصيد الخزنة (H-A · H9):
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.reverseLedgerSheetLayout)}
+                onChange={(e) =>
+                  updateSettings({ reverseLedgerSheetLayout: e.target.checked })
+                }
+                className="rounded text-amber-600"
+              />
+              <span>
+                عكس التخطيط لمحل آخر (الافتراضي: اليمين مبيعات واليسار مشتريات)
+              </span>
+            </label>
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                أثر المشتريات على رصيد الخزنة في الدفتر (H9):
+              </label>
+              <select
+                value={settings.purchasesSafeBalanceImpact || 'deduct_end_of_day'}
+                onChange={(e) =>
+                  updateSettings({
+                    purchasesSafeBalanceImpact: e.target.value as
+                      | 'deduct_per_row'
+                      | 'deduct_end_of_day'
+                      | 'no_impact',
+                  })
+                }
+                className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded font-bold"
+              >
+                <option value="deduct_end_of_day">
+                  المشتريات تُسجَّل منفصلة وتُطرح آخر اليوم (الافتراضي)
+                </option>
+                <option value="deduct_per_row">
+                  المشتريات تُخصم سطراً بسطر من رصيد الخزنة
+                </option>
+                <option value="no_impact">
+                  لا تؤثر على رصيد الخزنة المكتوب في ورقة المبيعات
+                </option>
+              </select>
+            </div>
+          </div>
+
+          {/* H7 & H-B: Source Buckets & Scrap Purchase Inflow */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+            <div className="font-bold text-slate-800">
+              تصنيف مصادر البيع والذهب القديم (H7 · H-B):
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.autoAddScrapPurchasesToOldGoldInflow !== false}
+                onChange={(e) =>
+                  updateSettings({
+                    autoAddScrapPurchasesToOldGoldInflow: e.target.checked,
+                  })
+                }
+                className="rounded text-amber-600"
+              />
+              <span>
+                إضافة مشتريات الكسر/الذهب القديم تلقائياً لوارد وعاء الذهب القديم (H7.3)
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(settings.includeStandaloneKasrForOldGold)}
+                onChange={(e) =>
+                  updateSettings({
+                    includeStandaloneKasrForOldGold: e.target.checked,
+                  })
+                }
+                className="rounded text-amber-600"
+              />
+              <span>
+                تضمين كلمة "كسر" وحدها في البيع ضمن الذهب القديم (H-B.1)
+              </span>
+            </label>
+          </div>
+
+          {/* H10 & H5: Gold Availability Rule & Piece Weight Bounds */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+            <div className="font-bold text-slate-800">
+              قاعدة عدم البيع أكثر من المتاح (H10):
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">
+                حساب الذهب المتاح للبيع خلال اليوم:
+              </label>
+              <select
+                value={settings.goldAvailabilityRuleMode || 'with_opening'}
+                onChange={(e) =>
+                  updateSettings({
+                    goldAvailabilityRuleMode: e.target.value as
+                      | 'with_opening'
+                      | 'strict_daily',
+                  })
+                }
+                className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded font-bold"
+              >
+                <option value="with_opening">
+                  رصيد أول اليوم + مشتريات اليوم (مع تحديد السطر الأول للهبوط)
+                </option>
+                <option value="strict_daily">
+                  مقارنة صارمة بمشتريات ووارد اليوم فقط
+                </option>
+              </select>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Confirmation Modal for Emptying Recycle Bin Permanently */}

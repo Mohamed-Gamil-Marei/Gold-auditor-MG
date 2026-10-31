@@ -52,10 +52,22 @@ export interface SideTotalsComparison {
   approvedByAuditor?: boolean;
 }
 
+export type SalesSourceBucket = 'rayon' | 'bag' | 'old_gold' | 'other';
+
+export interface SourceBucketRuleConfig {
+  id: SalesSourceBucket;
+  name: string;
+  trackingUnit: 'pieces' | 'weight' | 'both';
+  color: string;
+  keywords: string[];
+  toleranceG: number;
+}
+
 export interface LedgerPageRegion {
   id: string;
   label: string;
   side: 'buy' | 'sell' | 'both';
+  blockIndex?: 1 | 2; // H-C: 1 = Right block, 2 = Left block
   x: number; // 0..1
   y: number; // 0..1
   w: number; // 0..1
@@ -64,9 +76,76 @@ export interface LedgerPageRegion {
 
 export interface SourcePageRef {
   pageIndex: number; // 1-indexed page in file or day
+  pdfPage?: number; // H5.1: 1-indexed page in original PDF/file
+  fileName?: string; // H5.1: Original file name
+  importBatchId?: string; // H5.1: Import batch ID
   pageImageKey?: string; // e.g. '2026-10-27__p1' or '2026-10-27'
   rowYRatio?: number; // 0..1 vertical position on the page
+  yTop?: number; // H5.1: 0..1 top of row bounding box
+  yBottom?: number; // H5.1: 0..1 bottom of row bounding box
+  bbox?: { x: number; y: number; w: number; h: number }; // H5.1: bounding box on sheet
   side?: 'buy' | 'sell';
+  sheetSide?: 'buy' | 'sell'; // H5.1 & H-A: 'sell' (right) or 'buy' (left)
+  sheetIndexInDay?: number; // H5.1: 1 for first sheet in day, 2, 3... for continuations
+  blockIndex?: 1 | 2; // H-C: 1 = Right block (الكتلة اليمنى), 2 = Left block (الكتلة اليسرى)
+  lineInBlock?: number; // H-C: 1-based ruled line number inside the block (including empty lines)
+  lineNo?: number; // H5.1: 1-based line number on the sheet
+  seq?: number; // H-C: Sequential order in sheet = lineInBlock for block 1, linesPerBlock + lineInBlock for block 2
+}
+
+export interface FreeAreaNote {
+  id: string;
+  text: string;
+  numericValue?: number | null;
+  suggestedCategory: 'sum' | 'subtract' | 'balance' | 'note';
+  matchedField?:
+    | 'sell_total'
+    | 'buy_total'
+    | 'sell_weight'
+    | 'buy_weight'
+    | 'net_cash'
+    | 'net_weight'
+    | 'safe_balance'
+    | null;
+  confidence: number;
+  locationHint?: string;
+}
+
+export interface RedOtherItem {
+  id: string;
+  text: string;
+  numericValue?: number | null;
+  category: 'total' | 'correction' | 'note' | 'unclassified';
+  confidence: number;
+  locationHint?: string;
+}
+
+export interface CashMovementSuspect {
+  id: string;
+  text: string;
+  amount: number;
+  pageNumber: number;
+  blockIndex?: 1 | 2;
+  lineInBlock?: number;
+  confidence: number;
+  classification: 'unclassified' | 'sell' | 'person' | 'expense' | 'advance' | 'ignore';
+  personId?: string;
+  workerId?: string;
+  expenseCategory?: string;
+}
+
+export interface BucketDailyReconciliation {
+  beforeG?: number;
+  beforeManual?: boolean;
+  autoInflowG?: number; // H-B.4: Auto inflow (e.g. scrap purchases for old_gold)
+  autoInflowConfirmed?: boolean;
+  manualInflowG?: number;
+  soldG?: number;
+  actualG?: number;
+  piecesBefore?: number;
+  piecesInflow?: number;
+  piecesSold?: number;
+  piecesActual?: number;
 }
 
 export interface Operation {
@@ -89,12 +168,22 @@ export interface Operation {
   // H4: Running balance columns from paper ledger
   runningBalanceBefore?: number;
   runningBalanceAfter?: number;
+  // H9: Running safe balance from Sales sheet
+  bookRunningCash?: number;
   pageNumberHint?: string | number;
   rowOrderInPage?: number;
   ocrConfidence?: number;
+  // H5 (البديل): Red circled number = number of pieces sold from Rayon
+  pieces?: number;
+  piecesConfidence?: number;
+  // H7 & H-B: Sales source bucket ('rayon' | 'bag' | 'old_gold' | 'other')
+  sourceBucket?: SalesSourceBucket;
+  sourceHint?: string;
+  sourceGuessed?: boolean;
+  multiSourceWarning?: boolean;
   // H5: Paper ledger red ink marks linked to this row (separate from reviewedFlag)
   bookMarks?: RedMarkItem[];
-  // P5: Link to compressed original ledger page image & row vertical position
+  // P5 & H5.1 & H-C: Full source reference to sheet, block, and line
   sourcePageRef?: SourcePageRef;
   createdAt: number;
   updatedAt: number;
@@ -150,6 +239,15 @@ export interface DayInfo {
   // H1/H3/H4: Handwritten ledger balances & totals comparison
   openingLedgerBalance?: number;
   closingLedgerBalance?: number;
+  // H9: Safe balance read from Sales sheet (Right sheet)
+  bookOpeningCash?: number;
+  bookClosingCash?: number;
+  // H7 & H-B: End-of-day inventory reconciliation per source bucket (Rayon / Bag / Old Gold / Other)
+  bucketReconciliation?: Partial<Record<SalesSourceBucket, BucketDailyReconciliation>>;
+  // H-C.3: Handwritten calculations/notes in the free area at the end of the day
+  freeAreaNotes?: FreeAreaNote[];
+  // H10.5: Reason recorded when locking a day that has a difference above tolerance
+  lockWithDiffReason?: string;
   ledgerTotalsComparison?: {
     sell?: SideTotalsComparison;
     buy?: SideTotalsComparison;
@@ -330,6 +428,20 @@ export interface AuditSettings {
   // H3.6 & P3: Additional toggles
   blockImportOnUnapprovedLargeDiff?: boolean;
   enableSelfLearningDictionary?: boolean;
+  // H-A: Sheet layout orientation (default false = Right is Sales, Left is Purchases)
+  reverseLedgerSheetLayout?: boolean;
+  // H-C: Number of ruled lines per block in the ledger sheet (default 25)
+  ledgerLinesPerBlock?: number;
+  // H5.2: Items that normally require piece counts when sold from Rayon
+  itemsExpectingPieces?: string[];
+  // H7 & H-B: Sales source buckets configuration & keyword toggles
+  sourceBucketsConfig?: Record<SalesSourceBucket, SourceBucketRuleConfig>;
+  includeStandaloneKasrForOldGold?: boolean;
+  autoAddScrapPurchasesToOldGoldInflow?: boolean;
+  // H9.4 & H10.6: How purchases affect the paper ledger's safe balance
+  purchasesSafeBalanceImpact?: 'deduct_per_row' | 'deduct_end_of_day' | 'no_impact';
+  // H10.4: Rule mode for "Gold cannot be sold more than available"
+  goldAvailabilityRuleMode?: 'with_opening' | 'strict_daily';
 }
 
 export interface BackupFileInfo {
@@ -375,6 +487,8 @@ export interface AuditVisitChecklist {
   highIssuesReviewed: boolean;
   safeVerified: boolean;
   goldInventoryVerified: boolean;
+  sourceBucketsMatched?: boolean; // H7.5: Source buckets reconciliation step
+  dayCloseVerified?: boolean; // H10.6: End-of-day cash & weight close step
   debtsMatched: boolean;
   advancesReviewed: boolean;
   expensesReviewed: boolean;
@@ -479,6 +593,8 @@ export interface UnifiedFilterState {
   searchQuery: string;
   // H5.3: Filter by paper ledger red marks
   bookMarkState?: 'all' | 'has_mark' | 'no_mark' | 'red_number_diff';
+  // H7.5: Filter by sales source bucket
+  sourceBuckets?: SalesSourceBucket[];
 }
 
 export interface SavedFilterPreset {

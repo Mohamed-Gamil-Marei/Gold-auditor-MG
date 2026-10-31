@@ -25,6 +25,7 @@ import { checkSellBelowBuyCost } from './checkSellBelowBuyCost';
 import { checkStatisticalOutliers } from './checkStatisticalOutliers';
 import { checkWorkerAdvances } from './checkWorkerAdvances';
 import { checkLedgerArithmetic } from './checkLedgerArithmetic';
+import { checkLedgerSourcesAndDayClose } from './checkLedgerSourcesAndDayClose';
 
 export interface AuditRunResult {
   issues: Issue[];
@@ -120,6 +121,10 @@ export function runAllAuditChecks(
     {
       name: 'حسابات الدفتر ومطابقة الإجماليات المكتوبة',
       fn: () => checkLedgerArithmetic(filteredOps, daysMap, settings),
+    },
+    {
+      name: 'مصادر البيع وعدد القطع وقفل اليوم وخزنة الدفتر',
+      fn: () => checkLedgerSourcesAndDayClose(filteredOps, daysMap, settings),
     },
   ];
 
